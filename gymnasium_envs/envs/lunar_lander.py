@@ -693,6 +693,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         assert len(state) == 12
 
         reward = 0
+        info = {}
         shaping = (
             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
@@ -722,13 +723,16 @@ class NotiLunarLander(gym.Env, EzPickle):
             reward = +100
         elif self.game_over and not success_landing:
             terminated = True
-            reward = -500
+            reward = -100
         elif not self.lander.awake and not success_landing:
             terminated = True
-            reward = -500
+            reward = -100
+
+        info["terminated"] = terminated
+        info["success"] = success_landing
+        info["truncated"] = truncated
 
         # add utterance to the info
-        info = {}
         info["utterance"] = noti_action
 
         if self.render_mode == "human":
