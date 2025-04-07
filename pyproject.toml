@@ -7,13 +7,17 @@ name = "gymnasium_envs"
 version = "0.0.1"
 dependencies = [
   "gymnasium",
+  "swig",
+  "gymnasium[box2d]",
+  "box2d",
   "pygame==2.1.3",
   "pre-commit",
   "wandb",
   "torch",
   "torchvision",
-  "tenserboard",
+  "tensorboard",
   "tyro",
   "numpy",
   "moviepy",
+  "highway_env"
 ]

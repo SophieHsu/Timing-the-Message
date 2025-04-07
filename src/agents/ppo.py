@@ -38,9 +38,9 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "gymnasium_envs/NotiLunarLander"
     """the id of the environment"""
-    total_timesteps: int = 500000
+    total_timesteps: int = int(1e9)
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
+    learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
     num_envs: int = 4
     """the number of parallel game environments"""
@@ -82,6 +82,12 @@ class Args:
     # transformer specific arguments
     context_len: int = 10
     """the context length for the transformer"""
+    n_blocks: int = 2
+    """the number of transformer blocks"""
+    h_dim: int = 8
+    """the hidden dimension for the transformer"""
+    n_heads: int = 2
+    """the number of attention heads for the transformer"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -109,17 +115,17 @@ class Agent(nn.Module):
         self.critic = TransformerCritic(state_dim=np.array(envs.single_observation_space.shape).prod(), 
                                         act_dim=envs.single_action_space[-1].n, 
                                         context_len=args.context_len, 
-                                        n_blocks=4, 
-                                        h_dim=64, 
-                                        n_heads=4, 
+                                        n_blocks=args.n_blocks, 
+                                        h_dim=args.h_dim, 
+                                        n_heads=args.n_heads, 
                                         drop_p=0.1)
         
         self.actor = TransformerPolicy(state_dim=np.array(envs.single_observation_space.shape).prod(), 
                                        act_dim=envs.single_action_space[-1].n, 
-                                       n_blocks=4, 
-                                       h_dim=64, 
+                                       n_blocks=args.n_blocks, 
+                                       h_dim=args.h_dim, 
                                        context_len=args.context_len, 
-                                       n_heads=4, 
+                                       n_heads=args.n_heads, 
                                        drop_p=0.1)
 
     def get_value(self, x):
@@ -151,7 +157,7 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.env_id.split('/')[-1]}_{args.exp_name}_{args.seed}_{args.learning_rate}_{int(time.time())}"
     if args.track:
         import wandb
 

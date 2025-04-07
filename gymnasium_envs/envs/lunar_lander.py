@@ -211,7 +211,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
         human_agent_idx: int = 1,
-        max_episode_steps: int = 600,
+        max_episode_steps: int = 200,
     ):
         EzPickle.__init__(
             self,
@@ -720,13 +720,13 @@ class NotiLunarLander(gym.Env, EzPickle):
         
         if success_landing:
             terminated = True
-            reward = +100
+            # reward = +100
         elif self.game_over and not success_landing:
             terminated = True
-            reward = -100
+            # reward = -100
         elif not self.lander.awake and not success_landing:
             terminated = True
-            reward = -100
+            # reward = -100
 
         info["terminated"] = terminated
         info["success"] = success_landing
