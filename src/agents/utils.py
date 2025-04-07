@@ -2,6 +2,7 @@ import torch
 import gymnasium as gym
 import numpy as np
 from typing import Callable
+import os
 
 def evaluate(
     model_path: str,
@@ -14,7 +15,11 @@ def evaluate(
     capture_video: bool = True,
     args: dict = {},
 ):
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, run_name)])
+    # Create videos directory for evaluation
+    os.makedirs("videos/eval", exist_ok=True)
+    
+    # Use RecordVideo for both wandb and non-wandb cases
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, "eval")])
     agent = model(envs, args).to(device)
     agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     agent.eval()

@@ -161,7 +161,7 @@ if __name__ == "__main__":
             sync_tensorboard=True,
             config=vars(args),
             name=run_name,
-            monitor_gym=True,
+            monitor_gym=False,
             save_code=True,
         )
     writer = SummaryWriter(f"runs/{run_name}")
@@ -352,22 +352,29 @@ if __name__ == "__main__":
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        if args.track and iteration % 100 == 0:
+        if args.track and global_step % 50000 == 0: # 1 step = 50 global steps
             torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
             torch.save(agent.state_dict(), f"{wandb.run.dir}/agent.pt")
             wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
             wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-            # evaluate(
-            #     f"{wandb.run.dir}/agent.pt",
-            #     make_env,
-            #     args.env_id,
-            #     eval_episodes=3,
-            #     run_name=f"eval",
-            #     model=Agent,
-            #     device="cpu",
-            #     capture_video=True,
-            #     args=args,
-            # )
+            episodic_returns = evaluate(
+                f"{wandb.run.dir}/agent.pt",
+                make_env,
+                args.env_id,
+                eval_episodes=3,
+                run_name=f"eval",
+                model=Agent,
+                device="cpu",
+                capture_video=True,
+                args=args,
+            )
+
+            if os.path.exists(f"videos/eval"):
+                for video_file in os.listdir(f"videos/eval"):
+                    if video_file.endswith(".mp4"):
+                        wandb.log({
+                            f"videos/eval_{video_file}": wandb.Video(f"videos/eval/{video_file}")
+                        }, step=global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
