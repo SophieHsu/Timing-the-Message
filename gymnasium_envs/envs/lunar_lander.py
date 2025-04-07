@@ -211,6 +211,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
         human_agent_idx: int = 1,
+        max_episode_steps: int = 600,
     ):
         EzPickle.__init__(
             self,
@@ -275,6 +276,10 @@ class NotiLunarLander(gym.Env, EzPickle):
                 -5.0,
                 -0.0,
                 -0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
             ]
         ).astype(np.float32)
         high = np.array(
@@ -291,6 +296,10 @@ class NotiLunarLander(gym.Env, EzPickle):
                 5.0,
                 1.0,
                 1.0,
+                3.0,
+                3.0,
+                3.0,
+                3.0
             ]
         ).astype(np.float32)
 
@@ -304,10 +313,13 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.action_space = spaces.Box(-1, +1, (2,), dtype=np.float32)
         else:
             # Nop, fire left engine, main engine, right engine
-            self.action_space = spaces.Discrete(4)
+            self.action_space = spaces.Tuple((spaces.Discrete(2), spaces.Discrete(12), spaces.Discrete(2),spaces.Discrete(4)))
 
         self.render_mode = render_mode
         self.human_agent_idx = human_agent_idx
+        self.max_episode_steps = max_episode_steps
+        self.danger_zones = []
+        self.step_count = 0
 
     def _destroy(self):
         if not self.moon:
@@ -370,8 +382,8 @@ class NotiLunarLander(gym.Env, EzPickle):
 
         # Create Lander body
         initial_y = VIEWPORT_H / SCALE
-        # initial_x = self.np_random.uniform(0, VIEWPORT_W / SCALE)
-        initial_x = VIEWPORT_W / SCALE / 2
+        initial_x = self.np_random.uniform(0, VIEWPORT_W / SCALE)
+        # initial_x = VIEWPORT_W / SCALE / 2
         self.lander: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(initial_x, initial_y),
             angle=0.0,
@@ -440,6 +452,10 @@ class NotiLunarLander(gym.Env, EzPickle):
 
         if self.render_mode == "human":
             self.render()
+
+        self.step_count = 0
+        self.spec.max_episode_steps = self.max_episode_steps
+
         return self.step([(0,0,0), np.array([0, 0])] if self.continuous else [(0,0,0), 0])[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
@@ -464,9 +480,49 @@ class NotiLunarLander(gym.Env, EzPickle):
         while self.particles and (all or self.particles[0].ttl < 0):
             self.world.DestroyBody(self.particles.pop(0))
 
+    def _measure_danger_zone_distance(self, pos):
+        # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
+        left_danger_zone_distance = self.observation_space.high[8]
+        right_danger_zone_distance = self.observation_space.high[9]
+        top_danger_zone_distance = self.observation_space.high[10]
+        bottom_danger_zone_distance = self.observation_space.high[11]
+
+        x = (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2)
+        y = (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
+
+        for zone in self.danger_zones:
+            # in danger zone
+            if x >= zone[0] and x <= zone[1] and y >= zone[2] and y <= zone[3]: # in danger zone
+                left_danger_zone_distance = 0.0
+                right_danger_zone_distance = 0.0
+                top_danger_zone_distance = 0.0
+                bottom_danger_zone_distance = 0.0
+                break
+
+            # check top and bottom danger zone
+            if (x >= zone[0] and x <= zone[1]): 
+                if y > zone[3]: # on top of bottom danger zone
+                    bottom_danger_zone_distance = min(bottom_danger_zone_distance, abs(y - zone[3]))
+
+                if y < zone[2]: # below top danger zone
+                    top_danger_zone_distance = min(top_danger_zone_distance, abs(zone[2] - y))
+            
+            # check left and right danger zone
+            if (y >= zone[2] and y <= zone[3]):
+                if x < zone[0]: # left of right danger zone
+                    right_danger_zone_distance = min(right_danger_zone_distance, abs(zone[0] - x))
+                if x > zone[1]: # right of left danger zone
+                    left_danger_zone_distance = min(left_danger_zone_distance, abs(x-zone[1]))
+
+        return left_danger_zone_distance, right_danger_zone_distance, top_danger_zone_distance, bottom_danger_zone_distance
+    
     def step(self, joint_action):
-        action = joint_action[self.human_agent_idx]
-        noti_action = joint_action[1 - self.human_agent_idx]
+        if self.human_agent_idx == 0:
+            action = joint_action[0]
+            noti_action = joint_action[1:]
+        else:
+            action = joint_action[-1]
+            noti_action = joint_action[:-1]
 
         assert self.lander is not None
 
@@ -504,10 +560,10 @@ class NotiLunarLander(gym.Env, EzPickle):
 
         if self.continuous:
             action = np.clip(action, -1, +1).astype(np.float32)
-        else:
-            assert self.action_space.contains(
-                action
-            ), f"{action!r} ({type(action)}) invalid "
+        # else:
+            # assert self.action_space.contains(
+            #     action
+            # ), f"{action!r} ({type(action)}) invalid "
 
         # Apply Engine Impulses
 
@@ -617,6 +673,9 @@ class NotiLunarLander(gym.Env, EzPickle):
         pos = self.lander.position
         vel = self.lander.linearVelocity
 
+        # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
+        to_left_danger_zone_distance, to_right_danger_zone_distance, to_top_danger_zone_distance, to_bottom_danger_zone_distance = self._measure_danger_zone_distance(pos)
+            
         state = [
             (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
@@ -626,8 +685,12 @@ class NotiLunarLander(gym.Env, EzPickle):
             20.0 * self.lander.angularVelocity / FPS,
             1.0 if self.legs[0].ground_contact else 0.0,
             1.0 if self.legs[1].ground_contact else 0.0,
+            to_left_danger_zone_distance,
+            to_right_danger_zone_distance,
+            to_top_danger_zone_distance,
+            to_bottom_danger_zone_distance
         ]
-        assert len(state) == 8
+        assert len(state) == 12
 
         reward = 0
         shaping = (
@@ -648,7 +711,11 @@ class NotiLunarLander(gym.Env, EzPickle):
         reward -= s_power * 0.03
 
         terminated = False
+        truncated = False
         success_landing = pos.x >= self.helipad_x1 and pos.x <= self.helipad_x2 and self.legs[0].ground_contact and self.legs[1].ground_contact and state[2] < 0.05 and state[2] > -0.05 and state[3] < 0.05 and state[3] > -0.05
+        
+        if self.step_count >= self.spec.max_episode_steps:
+            truncated = True
         
         if success_landing:
             terminated = True
@@ -667,7 +734,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
 
-        return np.array(state, dtype=np.float32), reward, terminated, False, info
+        self.step_count += 1
+        return np.array(state, dtype=np.float32), reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode is None:
