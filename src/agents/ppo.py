@@ -206,7 +206,7 @@ if __name__ == "__main__":
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     env_step = torch.zeros(args.num_envs).to(device)
-
+    
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -221,23 +221,28 @@ if __name__ == "__main__":
             env_steps[step] = env_step
 
             if step < args.context_len:
-                # For each environment, create the context
+                # Pre-allocate tensors with the correct shape and device
                 times_context = torch.zeros((args.context_len, args.num_envs), dtype=torch.long, device=device)
-                times_context[:step] = env_steps[:step]
-                times_context[step:] = step
-                
                 obs_context = torch.zeros((args.context_len, args.num_envs) + obs.shape[2:], dtype=torch.float32, device=device)
-                obs_context[:step] = obs[:step]
-                obs_context[step:] = obs[step].unsqueeze(0).repeat(args.context_len-step, 1, 1)
-                
                 action_context = torch.zeros((args.context_len, args.num_envs) + actions.shape[2:], dtype=torch.long, device=device)
-                action_context[:step] = actions[:step]
-                action_context[step:] = actions[step].unsqueeze(0).repeat(args.context_len-step, 1)
 
+                # Fill in the context more efficiently
+                if step > 0:
+                    times_context[:step] = env_steps[:step]
+                    obs_context[:step] = obs[:step]
+                    action_context[:step] = actions[:step]
+                
+                # Fill the remaining slots with the current step
+                times_context[step:] = step
+                obs_context[step:] = obs[step].unsqueeze(0).expand(args.context_len-step, -1, -1)
+                action_context[step:] = actions[step].unsqueeze(0).expand(args.context_len-step, -1)
+
+                # Transpose once at the end
                 times_context = times_context.transpose(0, 1)
                 obs_context = obs_context.transpose(0, 1)
                 action_context = action_context.transpose(0, 1)
             else:
+                # Use direct slicing for better efficiency
                 times_context = env_steps[step-args.context_len:step].transpose(0, 1)
                 obs_context = obs[step-args.context_len:step].transpose(0, 1)
                 action_context = actions[step-args.context_len:step].transpose(0, 1)
@@ -254,18 +259,31 @@ if __name__ == "__main__":
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, terminations, truncations, infos = envs.step(np.concatenate([np.array([(0,0,0)]*args.num_envs), action.unsqueeze(1).cpu().numpy()], axis=1))
+            # Create action array more efficiently
+            action_np = action.cpu().numpy()
+            # Pre-allocate the full action array with zeros
+            full_actions = np.zeros((args.num_envs, 4), dtype=np.float32)
+            # Only set the last element (the actual action)
+            full_actions[:, 3] = action_np.reshape(-1)
+            
+            # Execute environment step
+            next_obs, reward, terminations, truncations, infos = envs.step(full_actions)
+            
+            # Process done flags more efficiently
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
             env_step = torch.where(next_done==1.0, torch.zeros_like(env_step), env_step + 1)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+            # Log episode data more efficiently
+            if next_done.any():
+                # Get indices of done episodes
+                done_indices = torch.where(next_done)[0]
+                for i in done_indices:
+                    i = i.item()  # Convert to Python int for indexing
+                    print(f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}")
+                    writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
+                    writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -375,6 +393,7 @@ if __name__ == "__main__":
                         wandb.log({
                             f"videos/eval_{video_file}": wandb.Video(f"videos/eval/{video_file}")
                         }, step=global_step)
+            writer.add_scalar("eval/episodic_return", episodic_returns, global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
