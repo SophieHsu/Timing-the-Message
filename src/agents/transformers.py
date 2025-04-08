@@ -1,4 +1,3 @@
-
 """
 this extremely minimal GPT model is based on:
 Misha Laskin's tweet: 
@@ -12,9 +11,11 @@ following code
 
 """
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions.categorical import Categorical
 
 class MaskedCausalAttention(nn.Module):
     def __init__(self, h_dim, max_T, n_heads, drop_p):
@@ -65,7 +66,6 @@ class MaskedCausalAttention(nn.Module):
         out = self.proj_drop(self.proj_net(attention))
         return out
 
-
 class Block(nn.Module):
     def __init__(self, h_dim, max_T, n_heads, drop_p):
         super().__init__()
@@ -73,18 +73,18 @@ class Block(nn.Module):
         self.mlp = nn.Sequential(
                 nn.Linear(h_dim, 4*h_dim),
                 nn.GELU(),
+                nn.Dropout(drop_p),
                 nn.Linear(4*h_dim, h_dim),
                 nn.Dropout(drop_p),
             )
         self.ln1 = nn.LayerNorm(h_dim)
         self.ln2 = nn.LayerNorm(h_dim)
+        self.dropout = nn.Dropout(drop_p)
 
     def forward(self, x):
-        # Attention -> LayerNorm -> MLP -> LayerNorm
-        x = x + self.attention(x) # residual
-        x = self.ln1(x)
-        x = x + self.mlp(x) # residual
-        x = self.ln2(x)
+        # Attention -> LayerNorm -> MLP -> LayerNorm with residual connections
+        x = x + self.dropout(self.attention(self.ln1(x)))
+        x = x + self.dropout(self.mlp(self.ln2(x)))
         return x
     
 class TransformerCritic(nn.Module):
@@ -104,17 +104,29 @@ class TransformerCritic(nn.Module):
         ### projection heads (project to embedding)
         self.embed_ln = nn.LayerNorm(h_dim)
         self.embed_timestep = nn.Embedding(max_timestep, h_dim)
-        self.embed_state = torch.nn.Linear(state_dim, h_dim)
+        self.embed_state = nn.Sequential(
+            nn.Linear(state_dim, h_dim),
+            nn.LayerNorm(h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, h_dim)
+        )
         
         # discrete actions
-        self.embed_action = nn.Sequential(torch.nn.Embedding(act_dim, h_dim), nn.Tanh())
+        self.embed_action = nn.Sequential(
+            nn.Embedding(act_dim, h_dim),
+            nn.LayerNorm(h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, h_dim)
+        )
         
         ### prediction heads
-        self.predict_value = torch.nn.Linear(h_dim, 1)
-
+        self.predict_value = nn.Sequential(
+            nn.Linear(h_dim, h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, 1)
+        )
 
     def forward(self, timesteps, states, actions):
-
         B, T, _ = states.shape
 
         time_embeddings = self.embed_timestep(timesteps)
@@ -123,8 +135,8 @@ class TransformerCritic(nn.Module):
         state_embeddings = self.embed_state(states) + time_embeddings
         action_embeddings = self.embed_action(actions) + time_embeddings
 
-        # stack rtg, states and actions and reshape sequence as
-        # (r1, s1, a1, r2, s2, a2 ...)
+        # stack states and actions and reshape sequence as
+        # (s1, a1, s2, a2 ...)
         h = torch.stack(
             (state_embeddings, action_embeddings), dim=1
         ).permute(0, 2, 1, 3).reshape(B, 2 * T, self.h_dim)
@@ -140,7 +152,7 @@ class TransformerCritic(nn.Module):
         h = h.reshape(B, T, 2, self.h_dim).permute(0, 2, 1, 3)
 
         # get predictions
-        value_preds = self.predict_value(h[:,1])  # predict action given r, s
+        value_preds = self.predict_value(h[:,1])  # predict value given s, a
     
         return value_preds[:, -1]
 
@@ -162,26 +174,29 @@ class TransformerPolicy(nn.Module):
         ### projection heads (project to embedding)
         self.embed_ln = nn.LayerNorm(h_dim)
         self.embed_timestep = nn.Embedding(max_timestep, h_dim)
-        self.embed_state = torch.nn.Linear(state_dim, h_dim)
+        self.embed_state = nn.Sequential(
+            nn.Linear(state_dim, h_dim),
+            nn.LayerNorm(h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, h_dim)
+        )
         
         # discrete actions
-        self.embed_action = nn.Sequential(torch.nn.Embedding(act_dim, h_dim), nn.Tanh())
-        # self.embed_action = torch.nn.Embedding(act_dim, h_dim)
-        use_action_tanh = False # False for discrete actions
-
-        # # continuous actions
-        # self.embed_action = torch.nn.Linear(act_dim, h_dim)
-        # use_action_tanh = True # True for continuous actions
+        self.embed_action = nn.Sequential(
+            nn.Embedding(act_dim, h_dim),
+            nn.LayerNorm(h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, h_dim)
+        )
         
         ### prediction heads
-        self.predict_state = torch.nn.Linear(h_dim, state_dim)
         self.predict_action = nn.Sequential(
-            *([nn.Linear(h_dim, act_dim)] + ([nn.Tanh()] if use_action_tanh else []))
+            nn.Linear(h_dim, h_dim),
+            nn.GELU(),
+            nn.Linear(h_dim, act_dim)
         )
 
-
     def forward(self, timesteps, states, actions):
-
         B, T, _ = states.shape
 
         time_embeddings = self.embed_timestep(timesteps)
@@ -190,8 +205,8 @@ class TransformerPolicy(nn.Module):
         state_embeddings = self.embed_state(states) + time_embeddings
         action_embeddings = self.embed_action(actions) + time_embeddings
 
-        # stack rtg, states and actions and reshape sequence as
-        # (r1, s1, a1, r2, s2, a2 ...)
+        # stack states and actions and reshape sequence as
+        # (s1, a1, s2, a2 ...)
         h = torch.stack(
             (state_embeddings, action_embeddings), dim=1
         ).permute(0, 2, 1, 3).reshape(B, 2 * T, self.h_dim)
@@ -207,10 +222,54 @@ class TransformerPolicy(nn.Module):
         h = h.reshape(B, T, 2, self.h_dim).permute(0, 2, 1, 3)
 
         # get predictions
-        action_preds = self.predict_action(h[:,0])  # predict action given r, s
+        action_preds = self.predict_action(h[:,0])  # predict action given s
     
         return action_preds[:, -1]
 
     def action(self, timesteps, states, actions):
         action_preds = self.forward(timesteps, states, actions)
         return action_preds.argmax(dim=-1)
+
+
+class TransformerAgent(nn.Module):
+    def __init__(self, envs, args):
+        super().__init__()
+        self.critic = TransformerCritic(state_dim=np.array(envs.single_observation_space.shape).prod(), 
+                                        act_dim=envs.single_action_space[-1].n, 
+                                        context_len=args.context_len, 
+                                        n_blocks=args.n_blocks, 
+                                        h_dim=args.h_dim, 
+                                        n_heads=args.n_heads, 
+                                        drop_p=0.1)
+        
+        self.actor = TransformerPolicy(state_dim=np.array(envs.single_observation_space.shape).prod(), 
+                                       act_dim=envs.single_action_space[-1].n, 
+                                       n_blocks=args.n_blocks, 
+                                       h_dim=args.h_dim, 
+                                       context_len=args.context_len, 
+                                       n_heads=args.n_heads, 
+                                       drop_p=0.1)
+
+    def get_value(self, x):
+        if isinstance(x, list):
+            times, states, actions = x
+            return self.critic(times, states, actions)
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        if isinstance(x, list):
+            times, states, actions = x
+            logits = self.actor(times, states, actions)
+
+            probs = Categorical(logits=logits)
+            if action is None:
+                action = probs.sample()
+            return action, probs.log_prob(action), probs.entropy(), self.critic(times, states, actions)
+        else:
+            logits = self.actor(x)
+
+            probs = Categorical(logits=logits)
+            if action is None:
+                action = probs.sample()
+            return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+

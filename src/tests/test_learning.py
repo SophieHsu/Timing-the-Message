@@ -1,10 +1,9 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_atari_lstmpy
 import os
 import random
 import time
 from dataclasses import dataclass
 
-import gymnasium_envs
 import gymnasium as gym
 import numpy as np
 import torch
@@ -13,14 +12,14 @@ import torch.optim as optim
 import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+import gymnasium_envs
 
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from agents.transformers import TransformerPolicy, TransformerCritic
-from agents.eval import evaluate
+# Enable CUDA launch blocking for better error reporting
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 @dataclass
 class Args:
-    exp_name: str = "ppo"
+    exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
@@ -28,7 +27,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = True
+    track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "timing"
     """the wandb's project name"""
@@ -38,15 +37,15 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "gymnasium_envs/NotiLunarLander"
+    env_id: str = "gymnasium_envs/Simple1DEnv"
     """the id of the environment"""
-    total_timesteps: int = int(1e9)
+    total_timesteps: int = 10000000
     """total timesteps of the experiments"""
-    learning_rate: float = 3e-4
+    learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
     num_envs: int = 8
     """the number of parallel game environments"""
-    num_steps: int = 256
+    num_steps: int = 32
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -54,13 +53,13 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 8
+    num_minibatches: int = 4
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
     norm_adv: bool = True
     """Toggles advantages normalization"""
-    clip_coef: float = 0.2
+    clip_coef: float = 0.1
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
@@ -84,12 +83,10 @@ class Args:
     # transformer specific arguments
     context_len: int = 10
     """the context length for the transformer"""
-    n_blocks: int = 4
+    n_blocks: int = 2
     """the number of transformer blocks"""
-    h_dim: int = 32
+    h_dim: int = 8
     """the hidden dimension for the transformer"""
-    n_heads: int = 4
-    """the number of attention heads for the transformer"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -112,46 +109,55 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs, args):
+    def __init__(self, envs):
         super().__init__()
-        self.critic = TransformerCritic(state_dim=np.array(envs.single_observation_space.shape).prod(), 
-                                        act_dim=envs.single_action_space[-1].n, 
-                                        context_len=args.context_len, 
-                                        n_blocks=args.n_blocks, 
-                                        h_dim=args.h_dim, 
-                                        n_heads=args.n_heads, 
-                                        drop_p=0.1)
-        
-        self.actor = TransformerPolicy(state_dim=np.array(envs.single_observation_space.shape).prod(), 
-                                       act_dim=envs.single_action_space[-1].n, 
-                                       n_blocks=args.n_blocks, 
-                                       h_dim=args.h_dim, 
-                                       context_len=args.context_len, 
-                                       n_heads=args.n_heads, 
-                                       drop_p=0.1)
+        self.lstm_size = 2
+        self.network = nn.Sequential(
+            layer_init(nn.Linear(envs.single_observation_space.shape[0] + 1+1, 2)),
+            nn.ReLU(),
+            layer_init(nn.Linear(2, self.lstm_size)),
+            nn.ReLU(),
+        )
+        self.lstm = nn.LSTM(2, 2)
+        for name, param in self.lstm.named_parameters():
+            if "bias" in name:
+                nn.init.constant_(param, 0)
+            elif "weight" in name:
+                nn.init.orthogonal_(param, 1.0)
+        self.actor = layer_init(nn.Linear(2, envs.single_action_space.n), std=0.01)
+        self.critic = layer_init(nn.Linear(2, 1), std=1)
 
-    def get_value(self, x):
-        if isinstance(x, list):
-            times, states, actions = x
-            return self.critic(times, states, actions)
-        return self.critic(x)
+    def get_states(self, x, lstm_state, done):
+        hidden = self.network(x)
 
-    def get_action_and_value(self, x, action=None):
-        if isinstance(x, list):
-            times, states, actions = x
-            logits = self.actor(times, states, actions)
+        # LSTM logic
+        batch_size = lstm_state[0].shape[1]
+        hidden = hidden.reshape((-1, batch_size, self.lstm.input_size))
+        done = done.reshape((-1, batch_size))
+        new_hidden = []
+        for h, d in zip(hidden, done):
+            h, lstm_state = self.lstm(
+                h.unsqueeze(0),
+                (
+                    (1.0 - d).view(1, -1, 1) * lstm_state[0],
+                    (1.0 - d).view(1, -1, 1) * lstm_state[1],
+                ),
+            )
+            new_hidden += [h]
+        new_hidden = torch.flatten(torch.cat(new_hidden), 0, 1)
+        return new_hidden, lstm_state
 
-            probs = Categorical(logits=logits)
-            if action is None:
-                action = probs.sample()
-            return action, probs.log_prob(action), probs.entropy(), self.critic(times, states, actions)
-        else:
-            logits = self.actor(x)
+    def get_value(self, x, lstm_state, done):
+        hidden, _ = self.get_states(x, lstm_state, done)
+        return self.critic(hidden)
 
-            probs = Categorical(logits=logits)
-            if action is None:
-                action = probs.sample()
-            return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+    def get_action_and_value(self, x, lstm_state, done, action=None):
+        hidden, lstm_state = self.get_states(x, lstm_state, done)
+        logits = self.actor(hidden)
+        probs = Categorical(logits=logits)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.entropy(), self.critic(hidden), lstm_state
 
 
 if __name__ == "__main__":
@@ -159,7 +165,7 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id.split('/')[-1]}_{args.exp_name}_{args.seed}_{args.learning_rate}_{int(time.time())}"
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
 
@@ -169,7 +175,7 @@ if __name__ == "__main__":
             sync_tensorboard=True,
             config=vars(args),
             name=run_name,
-            monitor_gym=False,
+            monitor_gym=True,
             save_code=True,
         )
     writer = SummaryWriter(f"runs/{run_name}")
@@ -185,37 +191,44 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    print(f"Using device: {device}")
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
     )
-    # assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs, args).to(device)
+    agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space[-1].shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    env_steps = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    times_contexts = torch.zeros((args.num_steps, args.num_envs, args.context_len), dtype=torch.long).to(device)
-    obs_contexts = torch.zeros((args.num_steps, args.num_envs, args.context_len) + envs.single_observation_space.shape).to(device)
-    action_contexts = torch.zeros((args.num_steps, args.num_envs, args.context_len) + envs.single_action_space[-1].shape, dtype=torch.long).to(device)
+    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape, device=device)
+    combined_contexts = torch.zeros((args.num_steps, args.num_envs, args.context_len, envs.single_observation_space.shape[0] + 1+1), device=device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape, dtype=torch.long, device=device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs), device=device)
+    rewards = torch.zeros((args.num_steps, args.num_envs), device=device)
+    dones = torch.zeros((args.num_steps, args.num_envs), device=device)
+    values = torch.zeros((args.num_steps, args.num_envs), device=device)
+    env_steps = torch.zeros((args.num_steps, args.num_envs), device=device)
+    times_context = torch.zeros((args.num_steps, args.num_envs, args.context_len), dtype=torch.long, device=device)
+    obs_context = torch.zeros((args.num_steps, args.num_envs, args.context_len) + envs.single_observation_space.shape, device=device)
+    action_context = torch.zeros((args.num_steps, args.num_envs, args.context_len) + envs.single_action_space.shape, dtype=torch.long, device=device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
-    next_obs = torch.Tensor(next_obs).to(device)
-    next_done = torch.zeros(args.num_envs).to(device)
-    env_step = torch.zeros(args.num_envs).to(device)
-    
+    next_obs = torch.tensor(next_obs, device=device)
+    next_done = torch.zeros(args.num_envs, device=device)
+    env_step = torch.zeros(args.num_envs, device=device)
+    next_lstm_state = (
+        torch.zeros(agent.lstm.num_layers, args.num_envs, agent.lstm.hidden_size, device=device),
+        torch.zeros(agent.lstm.num_layers, args.num_envs, agent.lstm.hidden_size, device=device),
+    )  # hidden and cell states
+
     for iteration in range(1, args.num_iterations + 1):
+        initial_lstm_state = (next_lstm_state[0].clone(), next_lstm_state[1].clone())
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -255,53 +268,38 @@ if __name__ == "__main__":
                 obs_context = obs[step-args.context_len:step].transpose(0, 1)
                 action_context = actions[step-args.context_len:step].transpose(0, 1)
 
-            # Ensure all tensors have the same sequence length
-            assert times_context.size(1) == obs_context.size(1) == action_context.size(1), \
-                f"Sequence lengths don't match: times={times_context.size(1)}, obs={obs_context.size(1)}, actions={action_context.size(1)}"
-
-            # Store the context tensors
-            times_contexts[step] = times_context.long()
-            obs_contexts[step] = obs_context
-            action_contexts[step] = action_context.long()
+            combined_context = torch.cat((times_context.unsqueeze(2), obs_context, action_context.unsqueeze(2)), dim=2)
+            combined_contexts[step] = combined_context
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value([times_context.long(), obs_context, action_context.long()])
-                values[step] = value.reshape(-1, args.num_envs)
+                action, logprob, _, value, next_lstm_state = agent.get_action_and_value(combined_context, next_lstm_state, next_done)
+                values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            # Create action array more efficiently
-            action_np = action.cpu().numpy()
-            # Pre-allocate the full action array with zeros
-            full_actions = np.zeros((4, args.num_envs), dtype=np.float32)
-            # Only set the last element (the actual action)
-            full_actions[3] = action_np.reshape(-1)
-            
-            # Execute environment step
-            next_obs, reward, terminations, truncations, infos = envs.step(full_actions)
-            
-            # Process done flags more efficiently
+            next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
             next_done = np.logical_or(terminations, truncations)
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
+            rewards[step] = torch.tensor(reward, device=device).view(-1)
+            next_obs = torch.tensor(next_obs, device=device)
+            next_done = torch.tensor(next_done, device=device).float()
             env_step = torch.where(next_done==1.0, torch.zeros_like(env_step), env_step + 1)
-
-            # Log episode data more efficiently
-            if next_done.any():
-                # Get indices of done episodes
-                done_indices = torch.where(next_done)[0]
-                for i in done_indices:
-                    i = i.item()  # Convert to Python int for indexing
-                    print(f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}")
-                    writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
-                    writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
+            if "final_info" in infos:
+                for info in infos["final_info"]:
+                    if info and "episode" in info:
+                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
-            next_value = agent.get_value([times_contexts[-1], obs_contexts[-1], action_contexts[-1]]).reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
+            next_value = agent.get_value(
+                combined_context,
+                next_lstm_state,
+                next_done,
+            ).reshape(1, -1)
+            advantages = torch.zeros_like(rewards)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
@@ -316,25 +314,33 @@ if __name__ == "__main__":
 
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_context = combined_context.reshape((-1, args.context_len, envs.single_observation_space.shape[0] + 1+1))
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space[-1].shape)
+        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+        b_dones = dones.reshape(-1)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
-        b_times_contexts = times_contexts.reshape(-1, args.context_len)
-        b_obs_contexts = obs_contexts.reshape(-1, args.context_len, *envs.single_observation_space.shape)
-        b_action_contexts = action_contexts.reshape(-1, args.context_len, *envs.single_action_space[-1].shape)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
+        assert args.num_envs % args.num_minibatches == 0
+        envsperbatch = args.num_envs // args.num_minibatches
+        envinds = np.arange(args.num_envs)
+        flatinds = np.arange(args.batch_size).reshape(args.num_steps, args.num_envs)
         clipfracs = []
         for epoch in range(args.update_epochs):
-            np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
+            np.random.shuffle(envinds)
+            for start in range(0, args.num_envs, envsperbatch):
+                end = start + envsperbatch
+                mbenvinds = envinds[start:end]
+                mb_inds = flatinds[:, mbenvinds].ravel()  # be really careful about the index
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value([b_times_contexts[mb_inds], b_obs_contexts[mb_inds], b_action_contexts[mb_inds]], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue, _ = agent.get_action_and_value(
+                    b_context[mb_inds],
+                    (initial_lstm_state[0][:, mbenvinds], initial_lstm_state[1][:, mbenvinds]),
+                    b_dones[mb_inds],
+                    b_actions.long()[mb_inds],
+                )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -382,32 +388,6 @@ if __name__ == "__main__":
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-        if args.track and global_step % 50000 == 0: # 1 step = 50 global steps
-            torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
-            torch.save(agent.state_dict(), f"{wandb.run.dir}/agent.pt")
-            wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
-            wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-            episodic_returns = evaluate(
-                f"{wandb.run.dir}/agent.pt",
-                make_env,
-                args.env_id,
-                eval_episodes=3,
-                run_name=run_name,
-                model=Agent,
-                device="cpu",
-                capture_video=True,
-                args=args,
-            )
-
-            if os.path.exists(f"videos/{run_name}"):
-                for video_file in os.listdir(f"videos/{run_name}"):
-                    if video_file.endswith(".mp4"):
-                        wandb.log({
-                            f"videos/eval_{video_file}": wandb.Video(f"videos/{run_name}/{video_file}")
-                        }, step=global_step)
-            for i in range(len(episodic_returns)):  
-                writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)

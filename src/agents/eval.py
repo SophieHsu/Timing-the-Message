@@ -19,7 +19,7 @@ def evaluate(
     os.makedirs("videos/eval", exist_ok=True)
     
     # Use RecordVideo for both wandb and non-wandb cases
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, "eval")])
+    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, run_name)])
     agent = model(envs, args).to(device)
     agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     agent.eval()
@@ -75,14 +75,12 @@ def evaluate(
         actions[step] = action
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, reward, terminations, truncations, infos = envs.envs[0].step([(0,0,0), action.cpu().numpy().item()])
+        next_obs, reward, terminations, truncations, infos = envs.envs[0].step((0.0,0.0,0.0, action.cpu().numpy().item()))
         next_done = np.logical_or(terminations, truncations)
         rewards[step] = torch.tensor([reward]).to(device).view(-1)
         next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
         env_step = torch.where(next_done==1.0, torch.zeros_like(env_step), env_step + 1)
-        
-        if next_done:
-            episodic_returns += [rewards[step].sum().item()]
+
 
         if "final_info" in infos:
             for info in infos["final_info"]:
@@ -90,5 +88,23 @@ def evaluate(
                     continue
                 print(f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}")
                 episodic_returns += [info["episode"]["r"]]
+
+                
+        if next_done:
+            episodic_returns += [rewards[step].sum().item()]
+            
+            obs = torch.zeros((args.num_steps, num_envs) + envs.single_observation_space.shape).to(device)
+            actions = torch.zeros((args.num_steps, num_envs) + envs.single_action_space[-1].shape).to(device)
+            rewards = torch.zeros((args.num_steps, num_envs)).to(device)
+            env_steps = torch.zeros((args.num_steps, num_envs)).to(device)
+            times_contexts = torch.zeros((args.num_steps, num_envs, args.context_len), dtype=torch.long).to(device)
+            obs_contexts = torch.zeros((args.num_steps, num_envs, args.context_len) + envs.single_observation_space.shape).to(device)
+            action_contexts = torch.zeros((args.num_steps, num_envs, args.context_len) + envs.single_action_space[-1].shape, dtype=torch.long).to(device)
+
+            next_obs, _ = envs.envs[0].reset()
+            next_obs = torch.Tensor(next_obs).to(device)
+            env_step = torch.zeros(num_envs).to(device)
+
+            step = 0
 
     return episodic_returns

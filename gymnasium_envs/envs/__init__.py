@@ -1,2 +1,3 @@
-from gymnasium_envs.envs.lunar_lander import NotiLunarLander
+from gymnasium_envs.envs.lunar_lander import NotiLunarLander, LargeRewardNotiLunarLander
 from gymnasium_envs.envs.highway import NotiHighway, NotiHighwayFast
+from gymnasium_envs.envs.test_env import Simple1DEnv
