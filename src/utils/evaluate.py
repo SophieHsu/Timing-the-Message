@@ -17,30 +17,40 @@ class BaseEvaluator:
         model: torch.nn.Module,
         device: torch.device = torch.device("cpu"),
         capture_video: bool = True,
+        human_agent_model: torch.nn.Module = None,
     ):
         envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
         agent = model(envs, self.args).to(device)
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
-        obs, _ = envs.reset()
+        human_agent = None
+        if self.args.human_agent_type is not None:
+            human_agent = human_agent_model(envs, self.args).to(device)
+            human_agent.load_state_dict(torch.load(self.args.human_agent_path, map_location=device, weights_only=True))
+            human_agent.eval()
+
+        num_envs = 1
+        obs, infos = envs.reset()
         episodic_returns = []
         while len(episodic_returns) < eval_episodes:
             actions, _, _, _ = agent.get_action_and_value(torch.Tensor(obs).to(device))
-            next_obs, reward, terminations, truncations, infos = envs.envs[0].step((0.0,0.0,0.0, actions.cpu().numpy().item()))
+
+            if human_agent is not None:
+                human_actions = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
+                actions = np.concatenate([actions, human_actions], axis=0)
+            else:
+                actions = (0, 0, 0, actions.cpu().numpy().item())
+
+            next_obs, reward, terminations, truncations, infos = envs.envs[0].step(actions)
+            infos["utterance"] = [infos["utterance"]]
             next_done = np.logical_or(terminations, truncations)
             reward = torch.tensor([reward]).to(device).view(-1)
             next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if "episode" not in info:
-                        continue
-                    print(f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}")
-                    episodic_returns += [info["episode"]["r"]]
 
             if next_done:
                 episodic_returns += [reward.sum().item()]
-                obs, _ = envs.envs[0].reset()
+                obs, infos = envs.reset()
                 next_obs = torch.Tensor(obs).to(device)
 
             obs = next_obs

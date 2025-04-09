@@ -8,16 +8,20 @@ from gymnasium.vector import SyncVectorEnv
 from gymnasium.wrappers import RecordVideo
 import gymnasium as gym
 import gymnasium_envs
+import highway_env
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from configs.args import Args
-from agents.mlp import MLPAgent
-from agents.transformers import TransformerAgent
+from agents.mlp import MLPAgent, NotifierMLPAgent
 from agents.lstm import LSTMAgent
+from agents.transformers import TransformerAgent 
+from agents.humans import HumanAgent
 from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer
 from utils.util import make_env
+
+os.environ["OFFSCREEN_RENDERING"] = "1"
 
 def main():
     args = tyro.cli(Args)
@@ -38,6 +42,8 @@ def main():
             monitor_gym=False,
             save_code=True,
         )
+        wandb.config.update({"filepath": wandb.run.dir})
+
     writer = SummaryWriter(f"runs/{args.exp_name}")
     writer.add_text(
         "hyperparameters",
@@ -65,14 +71,33 @@ def main():
         agent = TransformerAgent(envs, args).to(device)
     else:
         raise ValueError(f"Unknown agent type: {args.agent_type}")
-    
+
+    # Human agent
+    human_agent = None
+    if args.human_agent_type is not None:
+        human_agent = HumanAgent(envs, args).to(device)
+
+        # Notifier agent
+        if args.agent_type == "mlp":
+            agent = NotifierMLPAgent(envs, args).to(device)
+        # elif args.agent_type == "lstm":
+        #     agent = NotifierLSTMAgent(envs, args).to(device)
+        # elif args.agent_type == "transformer":
+        #     agent = NotifierTransformerAgent(envs, args).to(device)
+        else:
+            raise ValueError(f"Unknown agent type: {args.agent_type}")
+
+    # notifier_agent = None
+    # if args.notifier_agent_type is not None:
+    #     notifier_agent = NotifierAgent(envs, args).to(device)
+        
     # Train agent
     if args.agent_type == "mlp":
-        trainer = BaseTrainer(agent, envs, args, writer, run_name, device)
+        trainer = BaseTrainer(agent, envs, args, writer, run_name, device, human_agent)
     elif args.agent_type == "lstm":
-        trainer = LSTMTrainer(agent, envs, args, writer, run_name, device)
+        trainer = LSTMTrainer(agent, envs, args, writer, run_name, device, human_agent)
     elif args.agent_type == "transformer":
-        trainer = TransformerTrainer(agent, envs, args, writer, run_name, device)
+        trainer = TransformerTrainer(agent, envs, args, writer, run_name, device, human_agent)
     trainer.train()
 
 if __name__ == "__main__":

@@ -207,7 +207,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         render_mode: Optional[str] = None,
         continuous: bool = False,
         gravity: float = -10.0,
-        enable_wind: bool = False,
+        enable_wind: bool = True,
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
         human_agent_idx: int = 1,
@@ -313,7 +313,8 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.action_space = spaces.Box(-1, +1, (2,), dtype=np.float32)
         else:
             # Nop, fire left engine, main engine, right engine
-            self.action_space = spaces.Tuple((spaces.Discrete(2), spaces.Discrete(12), spaces.Discrete(2),spaces.Discrete(4)))
+            # self.action_space = spaces.Tuple((spaces.Discrete(2), spaces.Discrete(12), spaces.Discrete(2), spaces.Discrete(4)))
+            self.action_space = spaces.MultiDiscrete([3, 3, 2, 4])
 
         self.render_mode = render_mode
         self.human_agent_idx = human_agent_idx
@@ -456,7 +457,9 @@ class NotiLunarLander(gym.Env, EzPickle):
         self.step_count = 0
         self.spec.max_episode_steps = self.max_episode_steps
 
-        return self.step([(0,0,0), np.array([0, 0])] if self.continuous else [(0,0,0), 0])[0], {}
+        next_obs, _, _, _, info = self.step([0,0,0, np.array([0, 0])] if self.continuous else [0,0,0, 0])
+
+        return next_obs, info
 
     def _create_particle(self, mass, x, y, ttl):
         p = self.world.CreateDynamicBody(
@@ -519,10 +522,10 @@ class NotiLunarLander(gym.Env, EzPickle):
     def step(self, joint_action):
         if self.human_agent_idx == 0:
             action = joint_action[0]
-            noti_action = joint_action[1:]
+            noti_action = tuple(int(x) for x in joint_action[1:])
         else:
             action = joint_action[-1]
-            noti_action = joint_action[:-1]
+            noti_action = tuple(int(x) for x in joint_action[:-1])
 
         assert self.lander is not None
 

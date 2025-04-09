@@ -12,7 +12,7 @@ cat <<EOT > slurm/train.job
 #SBATCH --partition=fm,sdm
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
-#SBATCH --gres=mps:50
+#SBATCH --gres=mps:10
 #SBATCH --mem=16G
 #SBATCH --time=72:00:00
 

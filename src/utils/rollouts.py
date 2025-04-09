@@ -3,13 +3,15 @@ import numpy as np
 import time
 
 class BaseRolloutCollector:
-    def __init__(self, args, agent, envs, writer, device):
+    def __init__(self, args, agent, envs, writer, device, human_agent):
         self.args = args
         self.agent = agent
         self.envs = envs
         self.writer = writer
         self.device = device
+        self.human_agent = human_agent
         self.initialize_storage()
+
     def initialize_storage(self):
         self.obs = torch.zeros((self.args.num_steps, self.args.num_envs) + self.envs.single_observation_space.shape).to(self.device)
         self.actions = torch.zeros((self.args.num_steps, self.args.num_envs) + self.envs.single_action_space[-1].shape).to(self.device)
@@ -19,7 +21,7 @@ class BaseRolloutCollector:
         self.values = torch.zeros((self.args.num_steps, self.args.num_envs)).to(self.device)
 
     def collect_rollouts(self, global_step):
-        next_obs, _ = self.envs.reset(seed=self.args.seed)
+        next_obs, infos = self.envs.reset(seed=self.args.seed)
         next_obs = torch.Tensor(next_obs).to(self.device)
         next_done = torch.zeros(self.args.num_envs).to(self.device)
 
@@ -38,12 +40,16 @@ class BaseRolloutCollector:
             self.logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            # Create action array more efficiently
-            action_np = action.cpu().numpy()
-            # Pre-allocate the full action array with zeros
-            full_actions = np.zeros((4, self.args.num_envs), dtype=np.float32)
-            # Only set the last element (the actual action)
-            full_actions[3] = action_np.reshape(-1)
+            if self.human_agent is not None:
+                human_action, _, _, _ = self.human_agent.get_action(next_obs, infos['utterance'])
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1)], axis=1)
+            else:
+                # Create action array more efficiently
+                action_np = action.cpu().numpy()
+                # Pre-allocate the full action array with zeros
+                full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
+                # Only set the last element (the actual action)
+                full_actions[:, 3] = action_np.reshape(-1)
             
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
@@ -97,8 +103,8 @@ class BaseRolloutCollector:
         return results
 
 class LSTMRolloutCollector(BaseRolloutCollector):
-    def __init__(self, args, agent, envs, writer, device):
-        super().__init__(args, agent, envs, writer, device)
+    def __init__(self, args, agent, envs, writer, device, human_agent):
+        super().__init__(args, agent, envs, writer, device, human_agent)
         
     def collect_rollouts(self, global_step, initial_lstm_state):
         # TRY NOT TO MODIFY: start the game
@@ -126,9 +132,9 @@ class LSTMRolloutCollector(BaseRolloutCollector):
             # Create action array more efficiently
             action_np = action.cpu().numpy()
             # Pre-allocate the full action array with zeros
-            full_actions = np.zeros((4, self.args.num_envs), dtype=np.float32)
+            full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
             # Only set the last element (the actual action)
-            full_actions[3] = action_np.reshape(-1)
+            full_actions[:, 3] = action_np.reshape(-1)
             
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
@@ -183,8 +189,8 @@ class LSTMRolloutCollector(BaseRolloutCollector):
         return results
 
 class TransformerRolloutCollector(BaseRolloutCollector):
-    def __init__(self, args, agent, envs, writer, device):
-        super().__init__(args, agent, envs, writer, device)
+    def __init__(self, args, agent, envs, writer, device, human_agent):
+        super().__init__(args, agent, envs, writer, device, human_agent)
 
     def initialize_storage(self):
         super().initialize_storage()
@@ -194,10 +200,8 @@ class TransformerRolloutCollector(BaseRolloutCollector):
         self.action_contexts = torch.zeros((self.args.num_steps, self.args.num_envs, self.args.context_len) + self.envs.single_action_space[-1].shape, dtype=torch.long).to(self.device)
         self.full_actions = torch.zeros((self.args.num_steps, self.args.num_envs, 4), dtype=torch.float32).to(self.device)
 
-    def collect_rollouts(self):
+    def collect_rollouts(self, global_step):
         # TRY NOT TO MODIFY: start the game
-        global_step = 0
-        start_time = time.time()
         next_obs, _ = self.envs.reset(seed=self.args.seed)
         next_obs = torch.Tensor(next_obs).to(self.device)
         next_done = torch.zeros(self.args.num_envs).to(self.device)
@@ -256,12 +260,12 @@ class TransformerRolloutCollector(BaseRolloutCollector):
             # Create action array more efficiently
             action_np = action.cpu().numpy()
             # Pre-allocate the full action array with zeros
-            full_action = np.zeros((4, self.args.num_envs), dtype=np.float32)
+            full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
             # Only set the last element (the actual action)
-            full_action[3] = action_np.reshape(-1)
+            full_actions[:, 3] = action_np.reshape(-1)
             
             # Execute environment step
-            next_obs, reward, terminations, truncations, infos = self.envs.step(full_action)
+            next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
             
             # Process done flags more efficiently
             next_done = np.logical_or(terminations, truncations)
@@ -296,6 +300,7 @@ class TransformerRolloutCollector(BaseRolloutCollector):
             returns = advantages + self.values
 
         results = {
+            "global_step": global_step,
             "obs": self.obs,
             "actions": self.actions,
             "logprobs": self.logprobs,

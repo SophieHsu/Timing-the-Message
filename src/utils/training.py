@@ -17,15 +17,17 @@ from utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator
 
 
 class BaseTrainer:
-    def __init__(self, agent, envs, args, writer, run_name, device):
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
         self.agent = agent
         self.envs = envs
         self.args = args
         self.writer = writer
         self.run_name = run_name
         self.device = device
-        self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device)
+        self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent)
         self.evaluator = BaseEvaluator(args, run_name)
+        self.human_agent = human_agent
+        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
 
     def train(self):
         # TRY NOT TO MODIFY: seeding
@@ -33,8 +35,6 @@ class BaseTrainer:
         np.random.seed(self.args.seed)
         torch.manual_seed(self.args.seed)
         torch.backends.cudnn.deterministic = self.args.torch_deterministic
-
-        device = torch.device("cuda" if torch.cuda.is_available() and self.args.cuda else "cpu")
 
         # env setup
         envs = gym.vector.SyncVectorEnv(
@@ -59,7 +59,7 @@ class BaseTrainer:
             # flatten the batch
             b_obs = results["obs"].reshape((-1,) + envs.single_observation_space.shape)
             b_logprobs = results["logprobs"].reshape(-1)
-            b_actions = results["actions"].reshape((-1,) + envs.single_action_space[-1].shape)
+            b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_advantages = results["advantages"].reshape(-1)
             b_returns = results["returns"].reshape(-1)
             b_values = results["values"].reshape(-1)
@@ -122,7 +122,7 @@ class BaseTrainer:
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-            if self.args.track and global_step % 50000 == 0: # 1 step = 50 global steps
+            if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
                 torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
@@ -162,10 +162,12 @@ class BaseTrainer:
 
 
 class LSTMTrainer(BaseTrainer):
-    def __init__(self, agent, envs, args, writer, run_name, device):
-        super().__init__(agent, envs, args, writer, run_name, device)
-        self.rollout_collector = LSTMRolloutCollector(args, agent, envs, writer, device)
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
+        super().__init__(agent, envs, args, writer, run_name, device, human_agent)
+        self.rollout_collector = LSTMRolloutCollector(args, agent, envs, writer, device, human_agent)
         self.evaluator = LSTMEvaluator(args, run_name)
+        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
+        
 
     def train(self):
         """Train the agent using PPO"""
@@ -200,7 +202,7 @@ class LSTMTrainer(BaseTrainer):
             # flatten the batch
             b_obs = results["obs"].reshape((-1,) + self.envs.single_observation_space.shape)
             b_logprobs = results["logprobs"].reshape(-1)
-            b_actions = results["actions"].reshape((-1,) + self.envs.single_action_space[-1].shape)
+            b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_dones = results["dones"].reshape(-1)
             b_advantages = results["advantages"].reshape(-1)
             b_returns = results["returns"].reshape(-1)
@@ -273,7 +275,7 @@ class LSTMTrainer(BaseTrainer):
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-            if self.args.track and global_step % 50000 == 0: # 1 step = 50 global steps
+            if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
                 torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
@@ -313,10 +315,11 @@ class LSTMTrainer(BaseTrainer):
 
 
 class TransformerTrainer(BaseTrainer):
-    def __init__(self, agent, envs, args, writer, run_name, device):
-        super().__init__(agent, envs, args, writer, run_name, device)
-        self.rollout_collector = TransformerRolloutCollector(args, agent, envs, writer, device)
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
+        super().__init__(agent, envs, args, writer, run_name, device, human_agent)
+        self.rollout_collector = TransformerRolloutCollector(args, agent, envs, writer, device, human_agent)
         self.evaluator = TransformerEvaluator(args, run_name)
+        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
 
     def train(self):
         # TRY NOT TO MODIFY: seeding
@@ -345,18 +348,18 @@ class TransformerTrainer(BaseTrainer):
                 lrnow = frac * self.args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
 
-            results = self.rollout_collector.collect_rollouts()
-
+            results = self.rollout_collector.collect_rollouts(global_step)
+            global_step = results["global_step"]
             # flatten the batch
             b_obs = results["obs"].reshape((-1,) + envs.single_observation_space.shape)
             b_logprobs = results["logprobs"].reshape(-1)
-            b_actions = results["actions"].reshape((-1,) + envs.single_action_space[-1].shape)
+            b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_advantages = results["advantages"].reshape(-1)
             b_returns = results["returns"].reshape(-1)
             b_values = results["values"].reshape(-1)
             b_times_contexts = results["times_contexts"].reshape(-1, self.args.context_len)
             b_obs_contexts = results["obs_contexts"].reshape(-1, self.args.context_len, *envs.single_observation_space.shape)
-            b_action_contexts = results["action_contexts"].reshape(-1, self.args.context_len, *envs.single_action_space[-1].shape)
+            b_action_contexts = results["action_contexts"].reshape(-1, self.args.context_len, *self.agent_single_action_space)
 
             # Optimizing the policy and value network
             b_inds = np.arange(self.args.batch_size)
@@ -416,7 +419,7 @@ class TransformerTrainer(BaseTrainer):
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-            if self.args.track and global_step % 50000 == 0: # 1 step = 50 global steps
+            if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
                 torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
