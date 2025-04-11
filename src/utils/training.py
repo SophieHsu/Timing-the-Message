@@ -11,7 +11,7 @@ import random
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector
+from utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector
 from utils.util import make_env
 from utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator
 
@@ -24,10 +24,10 @@ class BaseTrainer:
         self.writer = writer
         self.run_name = run_name
         self.device = device
-        self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent)
+        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
+        self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = BaseEvaluator(args, run_name)
         self.human_agent = human_agent
-        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
 
     def train(self):
         # TRY NOT TO MODIFY: seeding
@@ -58,6 +58,7 @@ class BaseTrainer:
             
             # flatten the batch
             b_obs = results["obs"].reshape((-1,) + envs.single_observation_space.shape)
+            b_next_agent_obs = results["next_agent_obs"].reshape((-1,) + (self.agent.single_observation_space,))
             b_logprobs = results["logprobs"].reshape(-1)
             b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_advantages = results["advantages"].reshape(-1)
@@ -73,7 +74,7 @@ class BaseTrainer:
                     end = start + self.args.minibatch_size
                     mb_inds = b_inds[start:end]
 
-                    _, newlogprob, entropy, newvalue = self.agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                    _, newlogprob, entropy, newvalue = self.agent.get_action_and_value(b_next_agent_obs[mb_inds], b_actions.long()[mb_inds])
                     logratio = newlogprob - b_logprobs[mb_inds]
                     ratio = logratio.exp()
 
@@ -164,9 +165,8 @@ class BaseTrainer:
 class LSTMTrainer(BaseTrainer):
     def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
         super().__init__(agent, envs, args, writer, run_name, device, human_agent)
-        self.rollout_collector = LSTMRolloutCollector(args, agent, envs, writer, device, human_agent)
+        self.rollout_collector = LSTMRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = LSTMEvaluator(args, run_name)
-        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
         
 
     def train(self):
@@ -201,6 +201,7 @@ class LSTMTrainer(BaseTrainer):
             
             # flatten the batch
             b_obs = results["obs"].reshape((-1,) + self.envs.single_observation_space.shape)
+            b_next_agent_obs = results["next_agent_obs"].reshape((-1,) + (self.agent.single_observation_space,))
             b_logprobs = results["logprobs"].reshape(-1)
             b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_dones = results["dones"].reshape(-1)
@@ -222,7 +223,7 @@ class LSTMTrainer(BaseTrainer):
                     mb_inds = flatinds[:, mbenvinds].ravel()  # be really careful about the index
 
                     _, newlogprob, entropy, newvalue, _ = self.agent.get_action_and_value(
-                        b_obs[mb_inds],
+                        b_next_agent_obs[mb_inds],
                         (initial_lstm_state[0][:, mbenvinds], initial_lstm_state[1][:, mbenvinds]),
                         b_dones[mb_inds],
                         b_actions.long()[mb_inds],
@@ -317,9 +318,8 @@ class LSTMTrainer(BaseTrainer):
 class TransformerTrainer(BaseTrainer):
     def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
         super().__init__(agent, envs, args, writer, run_name, device, human_agent)
-        self.rollout_collector = TransformerRolloutCollector(args, agent, envs, writer, device, human_agent)
+        self.rollout_collector = TransformerRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = TransformerEvaluator(args, run_name)
-        self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
 
     def train(self):
         # TRY NOT TO MODIFY: seeding
@@ -455,4 +455,57 @@ class TransformerTrainer(BaseTrainer):
             self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
         envs.close()
+        self.writer.close()
+
+
+class HeuristicTrainer(BaseTrainer):
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
+        super().__init__(agent, envs, args, writer, run_name, device, human_agent)
+        self.rollout_collector = HeuristicRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
+        self.evaluator = BaseEvaluator(args, run_name)
+
+    def train(self):
+        """Train the heuristic agent - in this case, just run episodes and log results"""
+        # Seeding
+        random.seed(self.args.seed)
+        np.random.seed(self.args.seed)
+        torch.manual_seed(self.args.seed)
+        torch.backends.cudnn.deterministic = self.args.torch_deterministic
+
+        global_step = 0
+        start_time = time.time()
+
+        for iteration in range(1, self.args.num_iterations + 1):
+            # Collect rollouts using the heuristic agent
+            results = self.rollout_collector.collect_rollouts(global_step)
+            global_step = results["global_step"]
+
+            # Log metrics
+            if self.args.track and global_step % self.args.save_freq == 0:
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
+                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                
+                episodic_returns = self.evaluator.evaluate(
+                    f"{wandb.run.dir}/agent.pt",
+                    make_env,
+                    eval_episodes=3,
+                    model=self.agent.__class__,
+                    device="cpu",
+                    capture_video=True,
+                )
+
+                if os.path.exists(f"videos/{self.run_name}"):
+                    for video_file in os.listdir(f"videos/{self.run_name}"):
+                        if video_file.endswith(".mp4"):
+                            wandb.log({
+                                f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
+                            }, step=global_step)
+                for i in range(len(episodic_returns)):  
+                    self.writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
+
+            # Log performance metrics
+            print("SPS:", int(global_step / (time.time() - start_time)))
+            self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        self.envs.close()
         self.writer.close()

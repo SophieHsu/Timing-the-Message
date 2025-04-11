@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 from utils.util import layer_init
-
+import numpy as np
 class LSTMAgent(nn.Module):
-    def __init__(self, envs, args):
+    def __init__(self, envs, args, single_observation_space=None):
         super().__init__()
         self.lstm_size = args.lstm_size
+        self.single_observation_space = envs.single_observation_space.shape[0] if single_observation_space is None else single_observation_space
         self.network = nn.Sequential(
-            layer_init(nn.Linear(envs.single_observation_space.shape[0], 128)),
+            layer_init(nn.Linear(self.single_observation_space, 128)),
             nn.ReLU(),
             layer_init(nn.Linear(128, 32)),
             nn.ReLU(),
@@ -58,3 +59,54 @@ class LSTMAgent(nn.Module):
 
     def forward(self, x, lstm_state, done):
         return self.get_action_and_value(x, lstm_state, done)[0]
+    
+
+class NotifierLSTMAgent(LSTMAgent):
+    def __init__(self, envs, args):
+        self.human_utterance_memory_length = args.human_utterance_memory_length
+        self.agent_obs_mode = args.agent_obs_mode
+        if self.agent_obs_mode == "history":
+            self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.human_utterance_memory_length
+        else:
+            self.single_observation_space = np.array(envs.single_observation_space.shape).prod()
+        super().__init__(envs, args, self.single_observation_space)
+
+        self.use_condition_head = args.use_condition_head
+        hidden_dim = 64
+        self.condition_dim, self.id_dim, self.length_dim, _ = envs.single_action_space.nvec
+
+        if self.use_condition_head:
+            self.condition_head = layer_init(nn.Linear(128, self.condition_dim), std=0.01)
+        self.id_head = layer_init(nn.Linear(128, self.id_dim), std=0.01)
+        self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
+
+    def get_action_and_value(self, x, lstm_state, done, action=None):
+        hidden, lstm_state = self.get_states(x, lstm_state, done)
+
+        id_logits = self.id_head(hidden)
+        length_logits = self.length_head(hidden)
+        id_probs = Categorical(logits=id_logits)
+        length_probs = Categorical(logits=length_logits)
+        
+        
+        if self.use_condition_head:
+            condition_logits = self.condition_head(hidden)
+            condition_probs = Categorical(logits=condition_logits)
+
+        if action is None:
+            if self.use_condition_head:
+                condition = condition_probs.sample()
+            else:
+                condition = torch.zeros(self.args.num_envs).to(self.args.device)
+            id = id_probs.sample()
+            length = length_probs.sample()
+            action = torch.stack([condition, id, length], dim=1)
+
+        if self.use_condition_head:
+            logprob = condition_probs.log_prob(action[:, 0]) + id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
+            entropy = condition_probs.entropy() + id_probs.entropy() + length_probs.entropy()
+        else:
+            logprob = id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
+            entropy = id_probs.entropy() + length_probs.entropy()
+
+        return action, logprob, entropy, self.critic(hidden), lstm_state

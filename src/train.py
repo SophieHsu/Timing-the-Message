@@ -15,9 +15,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from configs.args import Args
 from agents.mlp import MLPAgent, NotifierMLPAgent
-from agents.lstm import LSTMAgent
+from agents.lstm import LSTMAgent, NotifierLSTMAgent
 from agents.transformers import TransformerAgent 
 from agents.humans import HumanAgent
+from agents.heuristic import HeuristicAgent
 from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer
 from utils.util import make_env
 
@@ -56,7 +57,8 @@ def main():
     
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    
+    if args.device is None:
+        args.device = device
     # Create vectorized environment
     envs = SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, args.exp_name) for i in range(args.num_envs)]
@@ -69,19 +71,21 @@ def main():
         agent = LSTMAgent(envs, args).to(device)
     elif args.agent_type == "transformer":
         agent = TransformerAgent(envs, args).to(device)
+    elif args.agent_type == "heuristic":
+        agent = HeuristicAgent(envs, args).to(device)
     else:
         raise ValueError(f"Unknown agent type: {args.agent_type}")
 
     # Human agent
     human_agent = None
     if args.human_agent_type is not None:
-        human_agent = HumanAgent(envs, args).to(device)
+        human_agent = HumanAgent(envs, args, device)
 
         # Notifier agent
         if args.agent_type == "mlp":
             agent = NotifierMLPAgent(envs, args).to(device)
-        # elif args.agent_type == "lstm":
-        #     agent = NotifierLSTMAgent(envs, args).to(device)
+        elif args.agent_type == "lstm":
+            agent = NotifierLSTMAgent(envs, args).to(device)
         # elif args.agent_type == "transformer":
         #     agent = NotifierTransformerAgent(envs, args).to(device)
         else:
@@ -98,6 +102,8 @@ def main():
         trainer = LSTMTrainer(agent, envs, args, writer, run_name, device, human_agent)
     elif args.agent_type == "transformer":
         trainer = TransformerTrainer(agent, envs, args, writer, run_name, device, human_agent)
+    elif args.agent_type == "heuristic":
+        trainer = HeuristicTrainer(agent, envs, args, writer, run_name, device, human_agent)
     trainer.train()
 
 if __name__ == "__main__":

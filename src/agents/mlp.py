@@ -11,9 +11,9 @@ from utils.util import layer_init
 from feature_extractors.highway_features import HighwayFeaturesExtractor
 
 class MLPAgent(BaseAgent):
-    def __init__(self, envs, args):
+    def __init__(self, envs, args, single_observation_space=None):
         super().__init__(envs, args)
-        input_dim = np.array(envs.single_observation_space.shape).prod()
+        self.single_observation_space = single_observation_space if single_observation_space is not None else np.array(envs.single_observation_space.shape).prod()
         self.feature_extractor = args.feature_extractor
 
         if args.feature_extractor == "highway":
@@ -22,11 +22,11 @@ class MLPAgent(BaseAgent):
                 embedding_layer_kwargs={"in_size": 7, "layer_sizes": [64, 64], "reshape": False},
                 attention_layer_kwargs={"feature_size": 64, "heads": 2},
             )
-            self.feature_extract = HighwayFeaturesExtractor(envs.single_observation_space, **attention_network_kwargs)
-            input_dim = self.feature_extract.features_dim
+            self.feature_extract = HighwayFeaturesExtractor(self.single_observation_space, **attention_network_kwargs)
+            self.single_observation_space = self.feature_extract.features_dim
 
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(input_dim, 64)),
+            layer_init(nn.Linear(self.single_observation_space, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
@@ -34,7 +34,7 @@ class MLPAgent(BaseAgent):
         )
 
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(input_dim, 64)),
+            layer_init(nn.Linear(self.single_observation_space, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
@@ -62,19 +62,26 @@ class MLPAgent(BaseAgent):
 
 class NotifierMLPAgent(MLPAgent):
     def __init__(self, envs, args):
-        super().__init__(envs, args)
-        input_dim = np.array(envs.single_observation_space.shape).prod()
+        self.use_condition_head = args.use_condition_head
+        self.human_utterance_memory_length = args.human_utterance_memory_length
+        self.agent_obs_mode = args.agent_obs_mode
+        if self.agent_obs_mode == "history":
+            self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.human_utterance_memory_length
+        else:
+            self.single_observation_space = np.array(envs.single_observation_space.shape).prod()
+        super().__init__(envs, args, self.single_observation_space)
         hidden_dim = 64
-        self.condition_dim, self.id_dim, self.length_dim = envs.single_action_space.shape
+        self.condition_dim, self.id_dim, self.length_dim, _ = envs.single_action_space.nvec
 
         self.notifier = nn.Sequential(
-            layer_init(nn.Linear(input_dim, hidden_dim)),
+            layer_init(nn.Linear(self.single_observation_space, hidden_dim)),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.Tanh(),
         )
         
-        self.condition_head = nn.Linear(hidden_dim, self.condition_dim)
+        if self.use_condition_head:
+            self.condition_head = nn.Linear(hidden_dim, self.condition_dim)
         self.id_head = nn.Linear(hidden_dim, self.id_dim)
         self.length_head = nn.Linear(hidden_dim, self.length_dim)
 
@@ -82,22 +89,32 @@ class NotifierMLPAgent(MLPAgent):
         if self.feature_extractor == "highway":
             x = self.feature_extract(x)
         features = self.notifier(x)
-        condition_logits = self.condition_head(features)
+
+        if self.use_condition_head:
+            condition_logits = self.condition_head(features)
+            condition_probs = Categorical(logits=condition_logits)
+        
         id_logits = self.id_head(features)
         length_logits = self.length_head(features)
 
-        condition_probs = Categorical(logits=condition_logits)
         id_probs = Categorical(logits=id_logits)
         length_probs = Categorical(logits=length_logits)
 
         if action is None:
-            condition = condition_probs.sample()
+            if self.use_condition_head:
+                condition = condition_probs.sample()
+            else:
+                condition = torch.zeros(self.args.num_envs).to(self.args.device)
             id = id_probs.sample()
             length = length_probs.sample()
-            action = (condition, id, length)
+            action = torch.stack([condition, id, length], dim=1)
 
-        logprob = condition_probs.log_prob(action[0]) + id_probs.log_prob(action[1]) + length_probs.log_prob(action[2])
-        entropy = condition_probs.entropy() + id_probs.entropy() + length_probs.entropy()
+        if self.use_condition_head:
+            logprob = condition_probs.log_prob(action[:, 0]) + id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
+            entropy = condition_probs.entropy() + id_probs.entropy() + length_probs.entropy()
+        else:
+            logprob = id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
+            entropy = id_probs.entropy() + length_probs.entropy()
 
         return action, logprob, entropy, self.critic(x)
     

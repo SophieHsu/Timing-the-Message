@@ -2,26 +2,31 @@
 from gymnasium.envs.registration import register
 
 register(
-    id="gymnasium_envs/NotiLunarLander",
+    id="NotiLunarLander",
     entry_point="gymnasium_envs.envs.lunar_lander:NotiLunarLander",
 )
 
 register(
-    id="gymnasium_envs/LargeRewardNotiLunarLander",
+    id="LargeRewardNotiLunarLander",
     entry_point="gymnasium_envs.envs.lunar_lander:LargeRewardNotiLunarLander",
 )
 
 register(
-    id="gymnasium_envs/NotiHighway",
+    id="DangerZoneLunarLander",
+    entry_point="gymnasium_envs.envs.lunar_lander:DangerZoneLunarLander",
+)
+
+register(
+    id="NotiHighway",
     entry_point="gymnasium_envs.envs.highway:NotiHighway",
 )
 
 register(
-    id="gymnasium_envs/NotiHighwayFast",
+    id="NotiHighwayFast",
     entry_point="gymnasium_envs.envs.highway:NotiHighwayFast",
 )
 
 register(
-    id="gymnasium_envs/Simple1DEnv",
+    id="Simple1DEnv",
     entry_point="gymnasium_envs.envs.test_env:Simple1DEnv",
 )

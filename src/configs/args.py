@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import copy
 
 @dataclass
 class Args:
@@ -6,6 +7,7 @@ class Args:
     exp_name: str = "ppo"
     seed: int = 1
     torch_deterministic: bool = True
+    device: str = None
     cuda: bool = True
     cuda_device: str = "cuda"
     track: bool = True
@@ -14,21 +16,23 @@ class Args:
     capture_video: bool = False
     save_freq: int = 50000
     # Environment settings
-    env_id: str = "gymnasium_envs/LargeRewardNotiLunarLander" #"multi-merge-v0" "gymnasium_envs/LargeRewardNotiLunarLander"
+    env_id: str = "DangerZoneLunarLander" #"multi-merge-v0" "LargeRewardNotiLunarLander"
     total_timesteps: int = int(1e9)
     
     # Agent settings
-    agent_type: str = "mlp"  # Options: "mlp", "lstm", "transformer"
+    agent_type: str = "mlp"  # Options: "mlp", "lstm", "transformer", "heuristic"
+    use_condition_head: bool = True
+    agent_obs_mode: str = "history" # Options: "history"
 
     # Human agent settings
-    human_agent_type: str = None # Options: "None", "mlp", "lstm", "transformer"
-    human_agent_run_id: str = "kk4f0c6e"
+    human_agent_type: str = "mlp" # Options: "None", "mlp", "lstm", "transformer"
+    human_agent_run_id: str = "xlq34dpt"
     human_agent_path: str = None
     human_utterance_memory_length: int = 10
 
     # PPO settings
     learning_rate: float = 2.5e-4
-    num_envs: int = 4
+    num_envs: int = 8
     num_steps: int = 128
     anneal_lr: bool = True
     gamma: float = 0.99
