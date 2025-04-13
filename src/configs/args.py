@@ -14,7 +14,7 @@ class Args:
     wandb_project_name: str = "timing"
     wandb_entity: str = "yachuanh"
     capture_video: bool = False
-    save_freq: int = 50000
+    save_freq: int = 1
     # Environment settings
     env_id: str = "DangerZoneLunarLander" #"multi-merge-v0" "LargeRewardNotiLunarLander"
     total_timesteps: int = int(1e9)

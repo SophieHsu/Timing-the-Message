@@ -265,6 +265,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         # Add notification history
         self.noti_history = []
         self.max_history_size = 10  # Maximum number of past notifications to display
+        self.curr_agent_action = None
+        self.overwrite_flag = False
 
         self.continuous = continuous
 
@@ -352,6 +354,11 @@ class NotiLunarLander(gym.Env, EzPickle):
         self.world.contactListener = self.world.contactListener_keepref
         self.game_over = False
         self.prev_shaping = None
+        
+        # Reset notification history and flags
+        self.noti_history = []
+        self.curr_agent_action = None
+        self.overwrite_flag = 0
 
         W = VIEWPORT_W / SCALE
         H = VIEWPORT_H / SCALE
@@ -461,7 +468,11 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.render()
 
         self.step_count = 0
-        self.spec.max_episode_steps = self.max_episode_steps
+
+        try:
+            self.spec.max_episode_steps = self.max_episode_steps
+        except:
+            pass
 
         next_obs, _, _, _, info = self.step([0,0,0, np.array([0, 0])] if self.continuous else [0,0,0, 0])
 
@@ -508,10 +519,10 @@ class NotiLunarLander(gym.Env, EzPickle):
             # in danger zone
             if x >= danger_zone_min_x and x <= danger_zone_max_x and y >= danger_zone_min_y and y <= danger_zone_max_y: # in danger zone
                 # should expect negative, and that the closer the more negative, means higher penalty
-                left_danger_zone_distance = x - danger_zone_max_x 
-                right_danger_zone_distance = -(x - danger_zone_min_x) 
-                top_danger_zone_distance = y - danger_zone_max_y 
-                bottom_danger_zone_distance = -(y - danger_zone_min_y)
+                left_danger_zone_distance = 0 # x - danger_zone_max_x 
+                right_danger_zone_distance = 0 # x - danger_zone_min_x 
+                top_danger_zone_distance = 0 # y - danger_zone_max_y 
+                bottom_danger_zone_distance = 0 # y - danger_zone_min_y
                 break
 
             # check top and bottom danger zone
@@ -552,15 +563,26 @@ class NotiLunarLander(gym.Env, EzPickle):
     def step(self, joint_action):
         if self.human_agent_idx == 0:
             action = joint_action[0]
-            noti_action = tuple(int(x) for x in joint_action[1:])
+            noti_action = np.array(joint_action[1:-1])
+            overwrite_flag = joint_action[-1]
         else:
-            action = joint_action[-1]
-            noti_action = tuple(int(x) for x in joint_action[:-1])
+            action = joint_action[-2]
+            noti_action = np.array(joint_action[:-2])
+            overwrite_flag = joint_action[-1]
 
         # Store notification in history
+        if noti_action[0] == 0: # no notification
+            noti_action = np.array([0,0,0])
+        elif noti_action[0] == 1: # continue previous notification
+            noti_action = np.array([1,0,0])
+        else:
+            # process notification length: 2 or 5
+            noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
+            noti_action[-1] = (noti_action[-1]*3) + 2
+
         self.noti_history.append(noti_action)
-        if len(self.noti_history) > self.max_history_size:
-            self.noti_history.pop(0)  # Remove oldest notification
+        self.curr_agent_action = action
+        self.overwrite_flag = overwrite_flag
         
         assert self.lander is not None
 
@@ -753,8 +775,12 @@ class NotiLunarLander(gym.Env, EzPickle):
         truncated = False
         success_landing = pos.x >= self.helipad_x1 and pos.x <= self.helipad_x2 and self.legs[0].ground_contact and self.legs[1].ground_contact and state[2] < 0.05 and state[2] > -0.05 and state[3] < 0.05 and state[3] > -0.05
         
-        if self.step_count >= self.spec.max_episode_steps:
-            truncated = True
+        try:
+            if self.step_count >= self.spec.max_episode_steps:
+                truncated = True
+        except:
+            if self.step_count >= self.max_episode_steps:
+                truncated = True
         
         if success_landing:
             terminated = True
@@ -773,7 +799,14 @@ class NotiLunarLander(gym.Env, EzPickle):
         info["success"] = success_landing
         info["truncated"] = truncated
 
-        # add utterance to the info
+        # process notification and add utterance to the info
+        if noti_action[0] == 0: # no notification
+            noti_action = np.array([0,0,0])
+        elif noti_action[0] == 1: # continue previous notification
+            noti_action = np.array([-1,0,0])
+        else: # new notification
+            # process notification length: 2 or 5
+            noti_action[-1] += (noti_action[-1]*3) + 2
         info["utterance"] = noti_action
 
         if self.render_mode == "human":
@@ -926,13 +959,20 @@ class NotiLunarLander(gym.Env, EzPickle):
             y_pos = (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
             
             # Create text surfaces
-            x_text = font.render(f'X: {x_pos:.2f} Y: {y_pos:.2f}', True, (255, 255, 255))
+            pos_text = font.render(f'X: {x_pos:.2f} Y: {y_pos:.2f}', True, (255, 255, 255))
+
+            # Add current human action
+            if self.curr_agent_action is not None:
+                # Use different colors for overwritten actions
+                color = (255, 0, 0) if self.overwrite_flag == 1 else (255, 255, 0)  # Red for overwritten, yellow for normal
+                action_text = font.render(f'Human: {self.curr_agent_action}', True, color)
+                self.surf.blit(action_text, (160, 10))
             
             # Draw text - now we can use normal coordinates since the surface is already flipped
-            self.surf.blit(x_text, (10, 10))
+            self.surf.blit(pos_text, (10, 10))
             
             # Add current notification action
-            curr_noti = "" if len(self.noti_history) == 0 else self.noti_history[-1]    
+            curr_noti = "" if len(self.noti_history) == 0 else self.noti_history[-1]  
             noti_text = font.render(f'Noti: {curr_noti}', True, (0, 255, 255))
             self.surf.blit(noti_text, (10, 30))
             
@@ -945,7 +985,10 @@ class NotiLunarLander(gym.Env, EzPickle):
             for i, past_noti in enumerate(reversed(self.noti_history[:-1])):
                 if i >= self.max_history_size-1:
                     break
-                past_noti_text = font.render(f'{i+1}: {past_noti}', True, (0, 255, 255))
+                
+                # Use different colors for overwritten actions
+                color = (0, 255, 255)  # cyan for normal
+                past_noti_text = font.render(f'{i+1}: {past_noti}', True, color)
                 self.surf.blit(past_noti_text, (20, y_offset))
                 y_offset += 20
             
@@ -998,10 +1041,26 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
     def step(self, joint_action):
         if self.human_agent_idx == 0:
             action = joint_action[0]
-            noti_action = np.array(joint_action[1:])
+            noti_action = np.array(joint_action[1:-1])
+            overwrite_flag = joint_action[-1]
         else:
-            action = joint_action[-1]
-            noti_action = np.array(joint_action[:-1])
+            action = joint_action[-2]
+            noti_action = np.array(joint_action[:-2])
+            overwrite_flag = joint_action[-1]
+
+        # Store notification in history
+        if noti_action[0] == 0: # no notification
+            noti_action = np.array([0,0,0])
+        elif noti_action[0] == 1: # continue previous notification
+            noti_action = np.array([1,0,0])
+        else:
+            # process notification length: 2 or 5
+            noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
+            noti_action[-1] = (noti_action[-1]*3) + 2
+        
+        self.noti_history.append(noti_action)
+        self.curr_agent_action = action
+        self.overwrite_flag = overwrite_flag
 
         assert self.lander is not None
 
@@ -1248,14 +1307,6 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
         info["success"] = success_landing
         info["truncated"] = truncated
 
-        # process notification and add utterance to the info
-        if noti_action[0] == 0: # no notification
-            noti_action = np.array([0,0,0])
-        elif noti_action[0] == 1: # continue previous notification
-            noti_action = np.array([-1,0,0])
-        else: # new notification
-            # process notification length: 2 or 5
-            noti_action[-1] += (noti_action[-1]*3) + 2
         info["utterance"] = noti_action
 
         if self.render_mode == "human":
@@ -1269,11 +1320,11 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.danger_zones = [
-            [[-1.0, -0.6], [0.8, 1.33]],
+            [[-1.0, -0.6], [1.0, 1.33]],
             [[-0.3, 1.0], [0.3, 0.6]],
             [[0.3, 1.0], [0, 0.3]],
         ]
-        self.time_penalty = -0.1
+        self.time_penalty = -0.01
         self.prev_state = None
 
     def reset(
@@ -1288,6 +1339,11 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.world.contactListener = self.world.contactListener_keepref
         self.game_over = False
         self.prev_shaping = None
+        
+        # Reset notification history and flags
+        self.noti_history = []
+        self.curr_agent_action = None
+        self.overwrite_flag = False
 
         W = VIEWPORT_W / SCALE
         H = VIEWPORT_H / SCALE
@@ -1325,8 +1381,8 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
 
         # Create Lander body
         initial_y = VIEWPORT_H / SCALE
-        initial_x = self.np_random.uniform(VIEWPORT_W / SCALE / 2, VIEWPORT_W / SCALE)
-        # initial_x = VIEWPORT_W / SCALE / 2
+        # initial_x = self.np_random.uniform(VIEWPORT_W / SCALE / 2, VIEWPORT_W / SCALE)
+        initial_x = VIEWPORT_W / SCALE / 2
         self.lander: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(initial_x, initial_y),
             angle=0.0,
@@ -1397,30 +1453,40 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             self.render()
 
         self.step_count = 0
-        self.spec.max_episode_steps = self.max_episode_steps
+        
+        try:
+            self.spec.max_episode_steps = self.max_episode_steps
+        except:
+            pass
 
         next_obs, _, _, _, info = self.step([0,0,0, np.array([0, 0])] if self.continuous else [0,0,0, 0])
 
         return next_obs, info
 
-    def step(self, joint_action):
+    def step(self, joint_action, overwrite_flag=False):
         if self.human_agent_idx == 0:
             action = joint_action[0]
-            noti_action = np.array(joint_action[1:])
+            noti_action = np.array(joint_action[1:-1])
+            overwrite_flag = joint_action[-1]
         else:
-            action = joint_action[-1]
-            noti_action = np.array(joint_action[:-1])
+            action = joint_action[-2]
+            noti_action = np.array(joint_action[:-2])
+            overwrite_flag = joint_action[-1]
         
         # Store notification in history
         if noti_action[0] == 0: # no notification
             noti_action = np.array([0,0,0])
-            self.noti_history.append(np.array([0,0,0]))
         elif noti_action[0] == 1: # continue previous notification
-            self.noti_history.append(np.array([-1,0,0]))
+            noti_action = np.array([1,0,0])
         else:
             # process notification length: 2 or 5
+            noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
             noti_action[-1] = (noti_action[-1]*3) + 2
-            self.noti_history.append(noti_action)
+        
+        self.noti_history.append(noti_action)
+        self.curr_agent_action = action
+        self.overwrite_flag = overwrite_flag
+
         if len(self.noti_history) > self.max_history_size:
             self.noti_history.pop(0)
 
@@ -1622,7 +1688,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             max(0.2 - state[11], 0)   # bottom danger zone
         )
         self.reward_components["danger_zone"] = danger_zone_penalty
-        in_danger_zone = state[8] < 0 or state[9] < 0 or state[10] < 0 or state[11] < 0
+        in_danger_zone = state[8] < 0 and state[9] < 0 and state[10] < 0 and state[11] < 0
 
         # Reward for moving away from danger zones
         danger_avoidance_reward = 0
@@ -1643,26 +1709,29 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.reward_components["danger_avoidance"] = danger_avoidance_reward
 
         # # Stronger penalty for being inside danger zones
-        # if state[8] < 0 and state[9] < 0 and state[10] < 0 and state[11] < 0:
-        #     in_danger_zone_penalty = -10  # Increased from -30
-        # else:
-        #     in_danger_zone_penalty = 0
+        if in_danger_zone:
+            in_danger_zone_penalty = -20  # Increased from -30
+        else:
+            in_danger_zone_penalty = 0
         
         # self.reward_components["in_danger_zone"] = in_danger_zone_penalty
         
         # Add a small time penalty to encourage faster landings
          
-        time_penalty = 0.01
-        self.reward_components["time_penalty"] = time_penalty
+        self.reward_components["time_penalty"] = self.time_penalty
         
-        reward += danger_zone_penalty + time_penalty + danger_avoidance_reward
+        reward += danger_zone_penalty + self.time_penalty + in_danger_zone_penalty#+ danger_avoidance_reward
 
         terminated = False
         truncated = False
         success_landing = pos.x >= self.helipad_x1 and pos.x <= self.helipad_x2 and self.legs[0].ground_contact and self.legs[1].ground_contact and state[2] < 0.05 and state[2] > -0.05 and state[3] < 0.05 and state[3] > -0.05
         
-        if self.step_count >= self.spec.max_episode_steps:
-            truncated = True
+        try:
+            if self.step_count >= self.spec.max_episode_steps:
+                truncated = True
+        except:
+            if self.step_count >= self.max_episode_steps:
+                truncated = True
         
         if success_landing:
             terminated = True

@@ -19,7 +19,7 @@ from agents.lstm import LSTMAgent, NotifierLSTMAgent
 from agents.transformers import TransformerAgent 
 from agents.humans import HumanAgent
 from agents.heuristic import HeuristicAgent
-from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer
+from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer, HeuristicTrainer
 from utils.util import make_env
 
 os.environ["OFFSCREEN_RENDERING"] = "1"

@@ -55,10 +55,10 @@ class HumanAgent:
             current_utters = self.utterance_memory[:, i]
             
             # Create masks for different utterance types
-            is_negative_one = np.array([tuple(utter) == (-1, 0, 0) for utter in current_utters])
+            is_continue_one = np.array([tuple(utter) == (1, 0, 0) for utter in current_utters])
             is_zero = np.array([tuple(utter) == (0, 0, 0) for utter in current_utters])
-            is_other = ~(is_negative_one | is_zero) & ~is_done
-            is_track = is_negative_one & ~is_done
+            is_other = ~(is_continue_one | is_zero) & ~is_done
+            is_track = is_continue_one & ~is_done
             is_done[is_zero] = True
             
             # Process negative one utterances
@@ -75,7 +75,7 @@ class HumanAgent:
                     is_done[env_idx] = True
             
             # Check if track_length >= track_noti_action_length for any environment
-            valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths > track_noti_action_lengths) & (track_noti_actions != None))[0]
+            valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]
             self.overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
             self.track_overwrite[valid_lengths] = 1
             is_done[valid_lengths] = True
@@ -85,7 +85,7 @@ class HumanAgent:
                 break
 
     def update_overwrite_tracking(self):
-        overwrite_complete_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite >= self.overwrite_length))[0]
+        overwrite_complete_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > self.overwrite_length))[0]
         self.overwrite_action[overwrite_complete_idx] = -1
         self.track_overwrite[overwrite_complete_idx] = 0
     
@@ -96,13 +96,16 @@ class HumanAgent:
         with torch.no_grad():
             action, _, _, _ = self.policy_network.get_action_and_value(obs)
 
-        # Update action based on utterance
-        self.process_utterance(utterance)
+        self.update_overwrite_tracking()
 
         # Use the overwrite_action if it's set
         update_action_idx = np.where(self.overwrite_action != -1)[0]
         action[update_action_idx] = torch.tensor(self.overwrite_action[update_action_idx], dtype=torch.long).to(self.device)
-        self.update_overwrite_tracking()
 
-        return action
+        current_overwrite_flag = np.array(self.overwrite_action != -1, dtype=np.int32)
+        
+        # Update action based on utterance
+        self.process_utterance(utterance)
+
+        return action, current_overwrite_flag
     

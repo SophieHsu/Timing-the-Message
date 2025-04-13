@@ -135,6 +135,7 @@ class BaseTrainer:
                     model=self.agent.__class__,
                     device="cpu",
                     capture_video=True,
+                    visualize=True,
                 )
 
                 if os.path.exists(f"videos/{self.run_name}"):

@@ -60,13 +60,13 @@ class BaseRolloutCollector:
 
             # TRY NOT TO MODIFY: execute the game and log data.
             if self.human_agent is not None:
-                human_action = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1)], axis=1)
+                human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 # Create action array more efficiently
                 action_np = action.cpu().numpy()
                 # Pre-allocate the full action array with zeros
-                full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
+                full_actions = np.zeros((self.args.num_envs, 5), dtype=np.float32)
                 # Only set the last element (the actual action)
                 full_actions[:, 3] = action_np.reshape(-1)
             
@@ -156,13 +156,13 @@ class LSTMRolloutCollector(BaseRolloutCollector):
             # TRY NOT TO MODIFY: execute the game and log data.
 
             if self.human_agent is not None:
-                human_action = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1)], axis=1)
+                human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 # Create action array more efficiently
                 action_np = action.cpu().numpy()
                 # Pre-allocate the full action array with zeros
-                full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
+                full_actions = np.zeros((self.args.num_envs, 5), dtype=np.float32)
                 # Only set the last element (the actual action)
                 full_actions[:, 3] = action_np.reshape(-1)
             
@@ -291,7 +291,7 @@ class TransformerRolloutCollector(BaseRolloutCollector):
             # Create action array more efficiently
             action_np = action.cpu().numpy()
             # Pre-allocate the full action array with zeros
-            full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
+            full_actions = np.zeros((self.args.num_envs, 5), dtype=np.float32)
             # Only set the last element (the actual action)
             full_actions[:, 3] = action_np.reshape(-1)
             
@@ -376,11 +376,11 @@ class HeuristicRolloutCollector(BaseRolloutCollector):
 
             # Execute action in environment
             if self.human_agent is not None:
-                human_action = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1)], axis=1)
+                human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 action_np = action.cpu().numpy()
-                full_actions = np.zeros((self.args.num_envs, 4), dtype=np.float32)
+                full_actions = np.zeros((self.args.num_envs, 5), dtype=np.float32)
                 full_actions[:, 3] = action_np.reshape(-1)
             
             next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
