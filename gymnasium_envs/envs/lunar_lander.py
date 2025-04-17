@@ -211,7 +211,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         wind_power: float = 15.0,
         turbulence_power: float = 1.5,
         human_agent_idx: int = 1,
-        max_episode_steps: int = 300,
+        max_episode_steps: int = 600,
     ):
         EzPickle.__init__(
             self,
@@ -1036,7 +1036,7 @@ class NotiLunarLander(gym.Env, EzPickle):
 class LargeRewardNotiLunarLander(NotiLunarLander):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.enable_wind = False
+        self.enable_wind = True
 
     def step(self, joint_action):
         if self.human_agent_idx == 0:
@@ -1324,8 +1324,9 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             [[-0.3, 1.0], [0.3, 0.6]],
             [[0.3, 1.0], [0, 0.3]],
         ]
-        self.time_penalty = -0.01
+        self.time_penalty = -0.0
         self.prev_state = None
+        self.enable_wind = False
 
     def reset(
         self,
@@ -1669,16 +1670,16 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             + 10 * state[7]
         )  # And ten points for legs contact, the idea is if you
         # lose contact again after landing, you get negative reward
-        # if self.prev_shaping is not None:
-        #     reward = shaping - self.prev_shaping
+        if self.prev_shaping is not None:
+            reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
 
-        # reward -= (
-        #     m_power * 0.30
-        # )  # less fuel spent is better, about -30 for heuristic landing
-        # reward -= s_power * 0.03
+        reward -= (
+            m_power * 0.30
+        )  # less fuel spent is better, about -30 for heuristic landing
+        reward -= s_power * 0.03
 
-        # self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
+        self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
 
         # Danger zone penalties
         danger_zone_penalty = -10 * (
@@ -1688,7 +1689,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             max(0.2 - state[11], 0)   # bottom danger zone
         )
         self.reward_components["danger_zone"] = danger_zone_penalty
-        in_danger_zone = state[8] < 0 and state[9] < 0 and state[10] < 0 and state[11] < 0
+        in_danger_zone = state[8] <= 0 and state[9] <= 0 and state[10] <= 0 and state[11] <= 0
 
         # Reward for moving away from danger zones
         danger_avoidance_reward = 0

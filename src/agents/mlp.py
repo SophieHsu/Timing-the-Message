@@ -8,25 +8,18 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base import BaseAgent
 from utils.util import layer_init
-from feature_extractors.highway_features import HighwayFeaturesExtractor
+from feature_extractors.highway_features import HighwayNotifierFeaturesExtractor
 
 class MLPAgent(BaseAgent):
     def __init__(self, envs, args, single_observation_space=None):
         super().__init__(envs, args)
-        self.single_observation_space = single_observation_space if single_observation_space is not None else np.array(envs.single_observation_space.shape).prod()
         self.feature_extractor = args.feature_extractor
 
-        if args.feature_extractor == "highway":
-            attention_network_kwargs = dict(
-                in_size=5 * 15,
-                embedding_layer_kwargs={"in_size": 7, "layer_sizes": [64, 64], "reshape": False},
-                attention_layer_kwargs={"feature_size": 64, "heads": 2},
-            )
-            self.feature_extract = HighwayFeaturesExtractor(self.single_observation_space, **attention_network_kwargs)
-            self.single_observation_space = self.feature_extract.features_dim
+        if single_observation_space is None:
+            single_observation_space = np.array(envs.single_observation_space.shape).prod()
 
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(self.single_observation_space, 64)),
+            layer_init(nn.Linear(single_observation_space, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
@@ -34,7 +27,7 @@ class MLPAgent(BaseAgent):
         )
 
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(self.single_observation_space, 64)),
+            layer_init(nn.Linear(single_observation_space, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
@@ -64,17 +57,35 @@ class NotifierMLPAgent(MLPAgent):
     def __init__(self, envs, args):
         self.use_condition_head = args.use_condition_head
         self.human_utterance_memory_length = args.human_utterance_memory_length
+
         self.agent_obs_mode = args.agent_obs_mode
         if self.agent_obs_mode == "history":
-            self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.human_utterance_memory_length
+            self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + 3)*self.human_utterance_memory_length
         else:
-            self.single_observation_space = np.array(envs.single_observation_space.shape).prod()
-        super().__init__(envs, args, self.single_observation_space)
+            self.single_observation_space = np.array(envs.single_observation_space.shape).prod() + 3
+
+        if args.feature_extractor == "highway":
+            input_dim = (args.highway_features_dim + (envs.single_action_space.shape[0]-1))*self.human_utterance_memory_length
+        else:
+            input_dim = self.single_observation_space
+
+        # Initialize parent class first
+        super().__init__(envs, args, input_dim)
+
+        # Initialize feature extractor after parent class
+        if args.feature_extractor == "highway" and self.agent_obs_mode == "history":
+            attention_network_kwargs = dict(
+                in_size=5 * 15,
+                embedding_layer_kwargs={"in_size": 7, "layer_sizes": [64, 64], "reshape": False},
+                attention_layer_kwargs={"feature_size": 64, "heads": 2},
+            )
+            self.feature_extract = HighwayNotifierFeaturesExtractor(args, np.array(envs.single_observation_space.shape).prod(), **attention_network_kwargs)
+
         hidden_dim = 64
         self.condition_dim, self.id_dim, self.length_dim, _ = envs.single_action_space.nvec
 
         self.notifier = nn.Sequential(
-            layer_init(nn.Linear(self.single_observation_space, hidden_dim)),
+            layer_init(nn.Linear(input_dim, hidden_dim)),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.Tanh(),
@@ -84,6 +95,11 @@ class NotifierMLPAgent(MLPAgent):
             self.condition_head = nn.Linear(hidden_dim, self.condition_dim)
         self.id_head = nn.Linear(hidden_dim, self.id_dim)
         self.length_head = nn.Linear(hidden_dim, self.length_dim)
+    
+    def get_value(self, x):
+        if self.feature_extractor == "highway":
+            x = self.feature_extract(x)
+        return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
         if self.feature_extractor == "highway":

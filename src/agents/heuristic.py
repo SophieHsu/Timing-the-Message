@@ -1,26 +1,39 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import gymnasium as gym
-from gymnasium_envs.envs.lunar_lander import DangerZoneLunarLander, VIEWPORT_W, VIEWPORT_H, SCALE
+from gymnasium_envs.envs.lunar_lander import DangerZoneLunarLander, VIEWPORT_W, VIEWPORT_H, SCALE, LEG_DOWN
 import heapq
 import math
+import torch
+from torch.distributions.categorical import Categorical
 
 class HeuristicAgent:
-    def __init__(self):
-        self.env = None
-        self.danger_zones = [
-            [[-1.0, -0.6], [0.9, 1.33]],
-            [[-0.3, 1.0], [0.3, 0.6]],
-            [[0.3, 1.0], [0, 0.3]]
-        ]
-        self.W = None
-        self.H = None
+    def __init__(self, env, args):
+        self.env = env
+        self.args = args
+        self.danger_zones = env.envs[0].unwrapped.danger_zones
+        self.W = VIEWPORT_W / SCALE
+        self.H = VIEWPORT_H / SCALE
         self.helipad_x1 = None
         self.helipad_x2 = None
         self.helipad_y = None
         self.goal = None
         self.landing_pad = None
         self.optimal_path = None  # Initialize optimal_path attribute
+        self.previous_utterances = None
+
+        # Create the environment map
+        self.create_env_map(env)
+        
+        # Plot the environment map
+        self.plot_env_map()
+        
+        # Compute the optimal path from the starting position
+        start_pos = (VIEWPORT_W / SCALE / 2, VIEWPORT_H / SCALE - 1)  # Top center
+        self.optimal_path = self.compute_optimal_path(start_pos)
+        
+        # Plot the optimal path
+        self.plot_optimal_path()
 
     def create_env_map(self, env):
         """
@@ -132,7 +145,7 @@ class HeuristicAgent:
         start_x = start[0]
         start_y = start[1]
         start_pos = (start_x, start_y)
-        
+
         # Goal is the center of the landing pad
         goal_pos = ((self.helipad_x1 + self.helipad_x2) / 2, self.helipad_y)
         
@@ -159,9 +172,14 @@ class HeuristicAgent:
             if self.is_goal_reached(current_pos, goal_pos):
                 path = []
                 while current_pos in came_from:
-                    path.append(current_pos)
+                    x = (current_pos[0] - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2)
+                    y = (current_pos[1] - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
+                    path.append((x, y))
                     current_pos = came_from[current_pos]
-                path.append(start_pos)
+
+                x = (start_pos[0] - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2)
+                y = (start_pos[1] - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
+                path.append((x, y))
                 path.reverse()
                 self.optimal_path = path
                 return path
@@ -332,8 +350,8 @@ class HeuristicAgent:
                                              fill=True, color='red', alpha=0.3))
         
         # Plot the optimal path
-        path_x = [p[0] for p in self.optimal_path]
-        path_y = [p[1] for p in self.optimal_path]
+        path_x = [p[0] * (VIEWPORT_W / SCALE / 2) + VIEWPORT_W / SCALE / 2 for p in self.optimal_path]
+        path_y = [p[1] * (VIEWPORT_H / SCALE / 2) + (self.helipad_y + LEG_DOWN / SCALE) for p in self.optimal_path]
         plt.plot(path_x, path_y, 'b-', linewidth=2, label='Optimal Path')
         
         # Plot start and goal positions
@@ -352,13 +370,176 @@ class HeuristicAgent:
         plt.savefig('optimal_path.png')
         plt.show()
 
+    def get_action_and_value(self, x):
+        latest_obs = x.reshape(self.args.num_envs, -1)
+
+        # Based on the latest observation, retreive the closest distance to the danger zone
+        current_pos = x[:, :2]
+        to_left_danger_zone_distance = latest_obs[:, 8].cpu().numpy()
+        to_right_danger_zone_distance = latest_obs[:, 9].cpu().numpy()
+        to_top_danger_zone_distance = latest_obs[:, 10].cpu().numpy()
+        to_bottom_danger_zone_distance = latest_obs[:, 11].cpu().numpy()
+
+        # if any distance is less than 0.3, then action is based on the distance to the danger zone
+        action_id = torch.tensor(np.array([-1]*self.args.num_envs), dtype=torch.long).to(self.args.device)
+        close_to_danger_zone = np.where((to_right_danger_zone_distance < 0.5) | (to_bottom_danger_zone_distance < 0.5) | (to_left_danger_zone_distance < 0.5))[0]
+
+        nearest_point_indices = self.get_nearest_point_in_optimal_path(current_pos, self.optimal_path)
+        
+        # # For each environment, get the past optimal path segment
+        # past_optimal_paths = []
+        # for env_idx in range(self.args.num_envs):
+        #     nearest_idx = nearest_point_indices[env_idx]
+        #     start_idx = max(0, nearest_idx - 10)  # Ensure we don't go below 0
+        #     past_optimal_paths.append(optimal_path[start_idx:nearest_idx])
+        
+        # # Calculate divergence for each environment
+        # divergences = []
+        # for env_idx in range(self.args.num_envs):
+        #     # Extract the trajectory for this environment
+        #     env_trajectory = past_trajectory[env_idx:env_idx+1]
+        #     divergence = self.measure_past_trjectory_divergence(env_trajectory, past_optimal_paths[env_idx])
+        #     divergences.append(divergence)
+        
+        # # Convert to numpy array for easier handling
+        # divergences = np.array(divergences)
+        
+        # Check which environments have high divergence
+        # high_divergence_envs = divergences > 0.1
+        
+        # For environments with high divergence, compute next heading direction
+        if len(close_to_danger_zone) > 0:
+            nearest_idx = nearest_point_indices[0]
+            # Ensure we don't go beyond the end of the path
+            next_idx = max(0, nearest_idx-3)
+            next_optimal_point = self.optimal_path[next_idx]
+            
+            # Extract the trajectory for this environment
+            heading_action = self.compute_next_heading_direction(current_pos, next_optimal_point)
+            
+            # Update action_id for this environment
+            action_id[0] = heading_action
+        
+        # Get the action that has the maximum distance to the danger zone
+        condition = torch.ones(self.args.num_envs, dtype=torch.long).to(self.args.device)
+        length = torch.zeros(self.args.num_envs, dtype=torch.long).to(self.args.device)
+        condition[close_to_danger_zone] = 2
+        utter_flag = np.where((self.previous_utterances == 2))[0]
+        condition[utter_flag] = 1
+        action_id[utter_flag] = 0
+        action = torch.stack([condition, action_id, length], dim=1)
+
+        self.previous_utterances = condition.cpu().numpy()
+
+        return action, None, None, None
+
+    def get_nearest_point_in_optimal_path(self, current_pos, optimal_path):
+        """
+        Find the index of the point in the optimal path that is closest to the current position.
+        
+        Args:
+            current_pos: Tensor of shape [num_envs, 2] containing current positions
+            optimal_path: List of (x, y) coordinates representing the optimal path
+            
+        Returns:
+            Index of the nearest point in the optimal path
+        """
+        if optimal_path is None or len(optimal_path) == 0:
+            return 0
+            
+        # Initialize array to store nearest indices for each environment
+        nearest_indices = np.zeros(self.args.num_envs, dtype=int)
+        
+        # For each environment, find the nearest point in the optimal path
+        for env_idx in range(self.args.num_envs):
+            min_dist = float('inf')
+            nearest_idx = 0
+            
+            for i, point in enumerate(optimal_path):
+                # Calculate Euclidean distance between current position and path point
+                # dist = np.sqrt(np.sum((current_pos[env_idx].cpu().numpy() - np.array(point)) ** 2))
+                dist = abs(current_pos[env_idx].cpu().numpy()[0] - point[0])
+                
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_idx = i
+            
+            nearest_indices[env_idx] = nearest_idx
+                
+        return nearest_indices
+        
+    def measure_past_trjectory_divergence(self, past_trajectory, past_optimal_path):
+        """
+        Measure how much the past trajectory has diverged from the optimal path.
+        
+        Args:
+            past_trajectory: Tensor of shape [1, memory_length, 2] containing past positions for a single environment
+            past_optimal_path: List of (x, y) coordinates representing the optimal path segment
+            
+        Returns:
+            Divergence value (higher means more divergence)
+        """
+        if past_optimal_path is None or len(past_optimal_path) == 0:
+            return 0.0
+            
+        # Convert tensors to numpy arrays
+        trajectory = past_trajectory.cpu().numpy()
+        
+        # Calculate the average distance between trajectory points and optimal path points
+        total_dist = 0.0
+        count = 0
+        
+        # For each point in the trajectory, find the closest point in the optimal path
+        for i in range(trajectory.shape[1]):
+            point = trajectory[0, i, :]  # Shape: [2]
+            
+            # Find the closest point in the optimal path
+            min_dist = float('inf')
+            for opt_point in past_optimal_path:
+                dist = np.sqrt(np.sum((point - opt_point) ** 2))
+                min_dist = min(min_dist, dist)
+                
+            total_dist += min_dist
+            count += 1
+            
+        # Return the average distance as the divergence measure
+        return total_dist / max(1, count)
+        
+    def compute_next_heading_direction(self, current_pos, next_optimal_point):
+        """
+        Compute the heading direction to reach the next optimal point.
+        
+        Args:
+            past_trajectory: Tensor of shape [1, memory_length, 2] containing past positions for a single environment
+            next_optimal_point: (x, y) coordinates of the next point to reach
+            
+        Returns:
+            Action ID (0: up, 1: right, 2: down, 3: left)
+        """
+        # Calculate the vector from current position to the next optimal point
+        direction_vector = np.array(next_optimal_point) - current_pos.cpu().numpy()[0]
+        
+        # Determine the primary direction based on the vector components
+        # The action space is: 0: down, 1: right, 2: up, 3: left
+        if abs(direction_vector[1]) > abs(direction_vector[0]):
+            # Vertical movement is dominant
+            if direction_vector[1] > 0:
+                return 1  # Up
+            else:
+                return -1  # Down
+        else:
+            # Horizontal movement is dominant
+            if direction_vector[0] > 0:
+                return 2  # Right
+            else:
+                return 0  # Left
 
 if __name__ == "__main__":
     # Create the environment
     env = gym.make("DangerZoneLunarLander", render_mode="rgb_array")
     
     # Initialize the heuristic agent
-    heuristic = Heuristic()
+    heuristic = HeuristicAgent(env, args)
     
     # Create the environment map
     heuristic.create_env_map(env)
@@ -372,7 +553,7 @@ if __name__ == "__main__":
     
     # Plot the optimal path
     heuristic.plot_optimal_path()
-    
+
     # Close the environment
     env.close()
 

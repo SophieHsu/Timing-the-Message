@@ -3,7 +3,11 @@ import gymnasium as gym
 import numpy as np
 from typing import Callable
 import os
-from agents.humans import HumanAgent
+
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from agents.humans import HumanAgent, HumanDriverAgent
+from agents.heuristic import HeuristicAgent
 import copy
 import matplotlib.pyplot as plt
 import json
@@ -18,11 +22,13 @@ class BaseEvaluator:
 
     def compute_next_agent_obs(self, next_obs, infos):
         if self.args.agent_obs_mode == "history":
-            curr_agent_obs = torch.cat([next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
-            prev_agent_obs = self.next_agent_obs[-1].reshape(self.args.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+            reshape_next_obs = next_obs.reshape(self.args.num_envs, -1)
+            curr_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
+            prev_agent_obs = self.full_next_agent_obs[-1].reshape(self.args.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
             next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(self.args.num_envs, -1)
         else:
-            next_agent_obs = torch.cat([next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
+            reshape_next_obs = next_obs.reshape(self.args.num_envs, -1)
+            next_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
 
         return next_agent_obs
 
@@ -158,10 +164,14 @@ class BaseEvaluator:
 
         self.args.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((300, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+
         human_agent = None
-        if self.args.human_agent_type is not None:
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
             human_agent = HumanAgent(envs, self.args, device)
+        elif self.args.human_agent_type is not None and self.args.human_agent_type == "IDM":
+            human_agent = HumanDriverAgent(envs, self.args, device)
 
         obs, infos = envs.reset()
         episodic_returns = []
@@ -182,15 +192,15 @@ class BaseEvaluator:
 
             agent_actions, _, _, _ = agent.get_action_and_value(torch.Tensor(next_agent_obs).to(device))
             self.next_agent_obs[step] = next_agent_obs
-            
+            self.full_next_agent_obs[step] = next_agent_obs
             # Get human action if applicable
             human_action = None
-            overwrite_action_flag = False
+            overwrite_flag = False
             
             if human_agent is not None:
                 human_actions, overwrite_flag = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
                 actions = np.concatenate([agent_actions, human_actions.reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
-                human_action = human_actions.cpu().numpy().item()
+                human_action = human_actions.item()
             else:
                 actions = (0, 0, 0, agent_actions.cpu().numpy().item(), 0)
                 human_action = None
@@ -261,9 +271,10 @@ class LSTMEvaluator(BaseEvaluator):
 
         self.args.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((self.args.num_steps, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
         human_agent = None
-        if self.args.human_agent_type is not None:
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
             human_agent = HumanAgent(envs, self.args, device)
 
         next_done = torch.zeros(1).to(device)
@@ -314,7 +325,8 @@ class LSTMEvaluator(BaseEvaluator):
             # Get agent action
             agent_actions, _, _, _, next_lstm_state = agent.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
             self.next_agent_obs[step] = next_agent_obs
-            
+            self.full_next_agent_obs[step] = next_agent_obs
+
             # Get human action if applicable
             human_action = None
             overwrite_action_flag = False
@@ -322,7 +334,7 @@ class LSTMEvaluator(BaseEvaluator):
             if human_agent is not None:
                 human_actions, overwrite_flag = human_agent.get_action(next_obs, infos["utterance"])
                 actions = np.concatenate([agent_actions, human_actions.reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
-                human_action = human_actions.cpu().numpy().item()
+                human_action = human_actions.item()
             else:
                 actions = (0, 0, 0, agent_actions.cpu().numpy().item(), 0)
                 human_action = None
@@ -481,5 +493,193 @@ class TransformerEvaluator(BaseEvaluator):
                 trajectory_data = []
             else:
                 step += 1
+
+        return episodic_returns
+
+
+class BaseBlockingEvaluator(BaseEvaluator):
+    def __init__(self, args, run_name):
+        super().__init__(args, run_name)
+
+
+    def evaluate(self,
+        model_path: str,
+        make_env: Callable,
+        eval_episodes: int,
+        model: torch.nn.Module,
+        device: torch.device = torch.device("cpu"),
+        capture_video: bool = True,
+        visualize: bool = False,
+    ):
+        self.visualize = visualize
+        
+        envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
+        agent = model(envs, self.args).to(device)
+        agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        agent.eval()
+
+        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.args.device = device
+        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        human_agent = None
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
+            human_agent = HumanAgent(envs, self.args, device)
+
+        obs, infos = envs.reset()
+        episodic_returns = []
+        total_reward = 0
+        step = 0
+        episode_idx = 0
+        total_steps = 0
+
+        while len(episodic_returns) < eval_episodes:
+            # Initialize trajectory data for this episode
+            if step == 0:
+                trajectory_data = []
+            
+            # Get agent action
+            next_agent_obs = self.compute_next_agent_obs(torch.Tensor(obs).to(device), infos)
+
+            agent_actions, _, _, _ = agent.get_action_and_value(torch.Tensor(next_agent_obs).to(device))
+            self.next_agent_obs[step] = next_agent_obs
+            
+            for i in range(infos["utterance"][0][2]+self.args.rollout_reward_buffer_steps):
+                # Get human action if applicable
+                self.full_next_agent_obs[total_steps] = self.compute_next_agent_obs(torch.Tensor(obs).to(device), infos)
+                human_actions, overwrite_flag = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
+                actions = np.concatenate([agent_actions, human_actions.reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
+                human_action = human_actions.item()
+                
+                # Execute action
+                next_obs, reward, terminations, truncations, info = envs.envs[0].step(actions)
+                infos = {k: np.array([info[k]]) for k in info}
+                next_done = np.logical_or(terminations, truncations)
+                total_reward += reward
+
+                # Log trajectory data
+                trajectory_step = {
+                    'step': step,
+                    'agent_action_type': info["utterance"][0],
+                    'agent_action': info["utterance"][1],
+                    'agent_action_length': info["utterance"][2],
+                    'human_action': human_action,
+                    'overwritten': overwrite_flag,
+                    'reward': reward
+                }
+                
+                # Update trajectory data with reward
+                trajectory_data.append(trajectory_step)
+            
+                next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
+
+                if next_done:
+                    episodic_returns += [total_reward]
+                    
+                    # Visualize trajectory if enabled
+                    if self.visualize:
+                        self.visualize_trajectory(episode_idx, trajectory_data)
+                    
+                    obs, infos = envs.reset()
+                    next_obs = torch.Tensor(obs).to(device)
+                    total_reward = 0
+                    step = 0
+                    episode_idx += 1
+                    if human_agent is not None:
+                        human_agent.reset()
+                else:
+                    step += 1
+                    
+                obs = next_obs
+                agent_actions = np.array([[1,0,0]]* self.args.num_envs)
+
+        return episodic_returns
+    
+class HeuristicEvaluator(BaseEvaluator):
+    def __init__(self, args, run_name):
+        super().__init__(args, run_name)
+
+    def evaluate(self,
+        make_env: Callable,
+        eval_episodes: int,
+        device: torch.device = torch.device("cpu"),
+        capture_video: bool = True,
+        visualize: bool = False,
+    ):
+        self.visualize = visualize
+        
+        envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
+        agent = HeuristicAgent(envs, self.args)
+
+        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.args.device = device
+        self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.args.human_utterance_memory_length
+        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (self.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (self.single_observation_space,)).to(device)
+        self.args.device = device
+        human_agent = HumanAgent(envs, self.args, device)
+
+        obs, infos = envs.reset()
+        episodic_returns = []
+        total_reward = 0
+        step = 0
+        episode_idx = 0
+
+        while len(episodic_returns) < eval_episodes:
+            # Initialize trajectory data for this episode
+            if step == 0:
+                trajectory_data = []
+
+            # Get human action if applicable
+            next_agent_obs = torch.cat([torch.Tensor(obs).to(device), torch.Tensor(infos['utterance']).to(device)], dim=1)
+            agent_actions, _, _, _ = agent.get_action_and_value(next_agent_obs)
+
+            human_actions, overwrite_flag = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
+            actions = np.concatenate([agent_actions.cpu().numpy(), human_actions.cpu().numpy().reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
+            human_action = human_actions.item()
+            
+            # Execute action
+            next_obs, reward, terminations, truncations, info = envs.envs[0].step(actions)
+            infos = {k: np.array([info[k]]) for k in info}
+            next_done = np.logical_or(terminations, truncations)
+            total_reward += reward
+            
+            # Log trajectory data
+            trajectory_step = {
+                'step': step,
+                'agent_action_type': info["utterance"][0],
+                'agent_action': info["utterance"][1],
+                'agent_action_length': info["utterance"][2],
+                'human_action': human_action,
+                'overwritten': overwrite_flag,
+                'reward': reward
+            }
+
+            # Update trajectory data with reward
+            trajectory_data.append(trajectory_step)
+            
+            next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
+            
+            if next_done:
+                episodic_returns += [total_reward]
+                
+                # Visualize trajectory if enabled
+                if self.visualize:
+                    self.visualize_trajectory(episode_idx, trajectory_data)
+                
+                obs, infos = envs.reset()
+                next_obs = torch.Tensor(obs).to(device)
+                total_reward = 0
+                step = 0
+                episode_idx += 1
+                if human_agent is not None:
+                    human_agent.reset()
+
+                self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (self.single_observation_space,)).to(device)
+                self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (self.single_observation_space,)).to(device)
+            else:
+                step += 1
+            
+            obs = next_obs
 
         return episodic_returns

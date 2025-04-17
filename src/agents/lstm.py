@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.distributions.categorical import Categorical
 from utils.util import layer_init
 import numpy as np
+
 class LSTMAgent(nn.Module):
     def __init__(self, envs, args, single_observation_space=None):
         super().__init__()

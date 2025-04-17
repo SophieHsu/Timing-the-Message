@@ -12,30 +12,35 @@ class HumanAgent:
     def __init__(self, envs, args, device):
         self.envs = envs
         self.args = args
-        self.device = device
-
-        api = wandb.Api()
-        run = api.run(f"yachuanh/timing/{args.human_agent_run_id}")
-        human_agent_path = run.config['filepath'] + "/agent.pt"
-
-        if args.human_agent_type == "mlp":
-            self.policy_network = MLPAgent(envs, args).to(self.device)
-        elif args.human_agent_type == "lstm":
-            self.policy_network = LSTMAgent(envs, args).to(self.device)
-        elif args.human_agent_type == "transformer":
-            self.policy_network = TransformerAgent(envs, args).to(self.device)
-        else:
-            raise ValueError(f"Unknown human agent type: {args.human_agent_type}")
-        self.policy_network.load_state_dict(torch.load(human_agent_path, map_location=self.device, weights_only=True))
-        self.policy_network.eval()
+        self.device = device    
+        
+        if args.human_agent_type != "IDM":
+            # api = wandb.Api()
+            # run = api.run(f"yachuanh/timing/{args.human_agent_run_id}")
+            # human_agent_path = run.config['filepath'] + "/agent.pt"
+            human_agent_path = "/home/sophie.hsu.pi/Timing-the-Message/wandb/run-20250409_201211-xlq34dpt/files/agent.pt"
+        
+            if args.human_agent_type == "mlp":
+                self.policy_network = MLPAgent(envs, args).to(self.device)
+            elif args.human_agent_type == "lstm":
+                self.policy_network = LSTMAgent(envs, args).to(self.device)
+            elif args.human_agent_type == "transformer":
+                self.policy_network = TransformerAgent(envs, args).to(self.device)
+            else:
+                raise ValueError(f"Unknown human agent type: {args.human_agent_type}")
+            self.policy_network.load_state_dict(torch.load(human_agent_path, map_location=self.device, weights_only=True))
+            self.policy_network.eval()
 
         self.overwrite_length = 3
+        self.reaction_delay = self.args.human_reaction_delay
         self.reset()
 
     def reset(self):
         self.utterance_memory = np.array([[tuple([0,0,0])]*self.args.human_utterance_memory_length]*self.args.num_envs)
         self.overwrite_action = np.array([-1]*self.args.num_envs, dtype=np.int32)
+        self.tmp_overwrite_action = np.array([-1]*self.args.num_envs, dtype=np.int32)
         self.track_overwrite = np.zeros(self.args.num_envs, dtype=np.int32)
+        self.track_reaction_delay = np.zeros(self.args.num_envs, dtype=np.int32)
 
     def process_utterance(self, utterance):
         # Update utterance memory with the new utterance
@@ -70,27 +75,38 @@ class HumanAgent:
                 if track_noti_actions[env_idx] is None:
                     track_lengths[env_idx] += 1
                     _, track_noti_actions[env_idx], track_noti_action_lengths[env_idx] = tuple(utter)
+                    if not self.args.human_comprehend_bool:
+                        track_noti_action_lengths[env_idx] = 1
                     is_done[env_idx] = True
                 else:
                     is_done[env_idx] = True
             
             # Check if track_length >= track_noti_action_length for any environment
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]
-            self.overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
-            self.track_overwrite[valid_lengths] = 1
+            self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
+            self.track_reaction_delay[valid_lengths] = 1
             is_done[valid_lengths] = True
             
             # Break early if all environments have been processed
             if np.all(is_done):
                 break
 
+    def update_reaction_delay_tracking(self):
+        continue_reaction_delay_idx = np.where((self.tmp_overwrite_action != -1) & (self.track_reaction_delay > 0))[0]
+        self.track_reaction_delay[continue_reaction_delay_idx] += 1
+
     def update_overwrite_tracking(self):
-        overwrite_complete_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > self.overwrite_length))[0]
+        overwrite_complete_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite >= (self.overwrite_length)))[0]
         self.overwrite_action[overwrite_complete_idx] = -1
         self.track_overwrite[overwrite_complete_idx] = 0
-    
-        continue_overwrite_idx = np.where(self.overwrite_action != -1)[0]
+
+        continue_overwrite_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > 0))[0]
         self.track_overwrite[continue_overwrite_idx] += 1
+
+        start_overwrite_idx = np.where((self.tmp_overwrite_action != -1) & (self.track_reaction_delay >= (self.reaction_delay+1)))[0]
+        self.overwrite_action[start_overwrite_idx] = self.tmp_overwrite_action[start_overwrite_idx]
+        self.track_overwrite[start_overwrite_idx] = 1
+        self.track_reaction_delay[start_overwrite_idx] = 0
 
     def get_action(self, obs, utterance):
         with torch.no_grad():
@@ -99,13 +115,38 @@ class HumanAgent:
         self.update_overwrite_tracking()
 
         # Use the overwrite_action if it's set
-        update_action_idx = np.where(self.overwrite_action != -1)[0]
+        update_action_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > 0))[0]
         action[update_action_idx] = torch.tensor(self.overwrite_action[update_action_idx], dtype=torch.long).to(self.device)
 
-        current_overwrite_flag = np.array(self.overwrite_action != -1, dtype=np.int32)
+        current_overwrite_flag = np.array((self.overwrite_action != -1) & (self.track_overwrite > 0), dtype=np.int32)
+        
+        self.update_reaction_delay_tracking()
+        
+        # Update action based on utterance
+        self.process_utterance(utterance)
+
+        return action.cpu().numpy(), current_overwrite_flag
+    
+
+class HumanDriverAgent(HumanAgent):
+    def __init__(self, envs, args, device):
+        super().__init__(envs, args, device)
+
+    def get_action(self, obs, utterance):
+        # ACTIONS_ALL = {0: "LANE_LEFT", 1: "IDLE", 2: "LANE_RIGHT", 3: "FASTER", 4: "SLOWER"}
+        action = np.array([-1]*self.args.num_envs) 
+
+        self.update_overwrite_tracking()
+
+        # Use the overwrite_action if it's set
+        update_action_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > 0))[0]
+        action[update_action_idx] = self.overwrite_action[update_action_idx]
+
+        current_overwrite_flag = np.array((self.overwrite_action != -1) & (self.track_overwrite > 0), dtype=np.int32)
+        
+        self.update_reaction_delay_tracking()
         
         # Update action based on utterance
         self.process_utterance(utterance)
 
         return action, current_overwrite_flag
-    

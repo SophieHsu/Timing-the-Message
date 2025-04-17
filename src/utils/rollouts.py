@@ -16,6 +16,7 @@ class BaseRolloutCollector:
     def initialize_storage(self):
         self.obs = torch.zeros((self.args.num_steps, self.args.num_envs) + self.envs.single_observation_space.shape).to(self.device)
         self.next_agent_obs = torch.zeros((self.args.num_steps, self.args.num_envs) + (self.agent.single_observation_space,)).to(self.device)
+        self.full_next_agent_obs = torch.zeros((self.args.num_steps*10, self.args.num_envs) + (self.agent.single_observation_space,)).to(self.device)
         self.actions = torch.zeros((self.args.num_steps, self.args.num_envs) + self.agent_single_action_space).to(self.device)
         self.logprobs = torch.zeros((self.args.num_steps, self.args.num_envs)).to(self.device)
         self.rewards = torch.zeros((self.args.num_steps, self.args.num_envs)).to(self.device)
@@ -25,11 +26,21 @@ class BaseRolloutCollector:
     def compute_next_agent_obs(self, next_obs, infos):
         if self.human_agent is not None:
             if self.args.agent_obs_mode == "history":
-                curr_agent_obs = torch.cat([next_obs, torch.Tensor(infos['utterance']).to(self.device)], dim=1)
-                prev_agent_obs = self.next_agent_obs[-1].reshape(self.args.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+                # Reshape next_obs to match the expected dimensions
+                next_obs_reshaped = next_obs.reshape(self.args.num_envs, -1)
+                # Convert utterance to tensor and reshape
+                utterance_tensor = torch.Tensor(infos['utterance']).to(self.device)
+                # Concatenate along the feature dimension
+                curr_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
+                # Get previous observations
+                prev_agent_obs = self.full_next_agent_obs[-1].reshape(self.args.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+                # Concatenate with current observation
                 next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(self.args.num_envs, -1)
             else:
-                next_agent_obs = torch.cat([next_obs, torch.Tensor(infos['utterance']).to(self.device)], dim=1)
+                # For non-history mode, just concatenate along the feature dimension
+                next_obs_reshaped = next_obs.reshape(self.args.num_envs, -1)
+                utterance_tensor = torch.Tensor(infos['utterance']).to(self.device)
+                next_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
         else:
             next_agent_obs = next_obs
         return next_agent_obs
@@ -39,8 +50,6 @@ class BaseRolloutCollector:
         next_obs = torch.Tensor(next_obs).to(self.device)
         next_done = torch.zeros(self.args.num_envs).to(self.device)
 
-        dist_threshold = 1.5
-   
         for step in range(0, self.args.num_steps):
             global_step += self.args.num_envs
             self.obs[step] = next_obs
@@ -52,16 +61,17 @@ class BaseRolloutCollector:
                     next_agent_obs = self.compute_next_agent_obs(next_obs, infos)
                 else:
                     next_agent_obs = next_obs
+                self.next_agent_obs[step] = next_agent_obs
+                self.full_next_agent_obs[step] = next_agent_obs
                 action, logprob, _, value = self.agent.get_action_and_value(next_agent_obs)
                 self.values[step] = value.flatten()
             self.actions[step] = action
             self.logprobs[step] = logprob
-            self.next_agent_obs[step] = next_agent_obs
 
             # TRY NOT TO MODIFY: execute the game and log data.
             if self.human_agent is not None:
                 human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 # Create action array more efficiently
                 action_np = action.cpu().numpy()
@@ -135,7 +145,7 @@ class LSTMRolloutCollector(BaseRolloutCollector):
             torch.zeros(self.agent.lstm.num_layers, self.args.num_envs, self.agent.lstm.hidden_size).to(self.device),
             torch.zeros(self.agent.lstm.num_layers, self.args.num_envs, self.agent.lstm.hidden_size).to(self.device),
         )  # hidden and cell states (see https://youtu.be/8HyCNIVRbSU)
-
+        
         for step in range(0, self.args.num_steps):
             global_step += self.args.num_envs
             self.obs[step] = next_obs
@@ -152,12 +162,12 @@ class LSTMRolloutCollector(BaseRolloutCollector):
             self.actions[step] = action
             self.logprobs[step] = logprob
             self.next_agent_obs[step] = next_agent_obs
-
+            self.full_next_agent_obs[step] = next_agent_obs
             # TRY NOT TO MODIFY: execute the game and log data.
 
             if self.human_agent is not None:
                 human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 # Create action array more efficiently
                 action_np = action.cpu().numpy()
@@ -237,6 +247,7 @@ class TransformerRolloutCollector(BaseRolloutCollector):
         next_obs = torch.Tensor(next_obs).to(self.device)
         next_done = torch.zeros(self.args.num_envs).to(self.device)
         env_step = torch.zeros(self.args.num_envs).to(self.device)
+
 
         for step in range(0, self.args.num_steps):
             global_step += self.args.num_envs
@@ -357,7 +368,7 @@ class HeuristicRolloutCollector(BaseRolloutCollector):
         next_obs, infos = self.envs.reset(seed=self.args.seed)
         next_obs = torch.Tensor(next_obs).to(self.device)
         next_done = torch.zeros(self.args.num_envs).to(self.device)
-
+        
         for step in range(0, self.args.num_steps):
             global_step += self.args.num_envs
             self.obs[step] = next_obs
@@ -373,11 +384,12 @@ class HeuristicRolloutCollector(BaseRolloutCollector):
                 self.values[step] = value.flatten()
             self.actions[step] = action
             self.next_agent_obs[step] = next_agent_obs
+            self.full_next_agent_obs[step] = next_agent_obs
 
             # Execute action in environment
             if self.human_agent is not None:
                 human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
-                full_actions = np.concatenate([action.cpu().numpy(), human_action.cpu().numpy().reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 action_np = action.cpu().numpy()
                 full_actions = np.zeros((self.args.num_envs, 5), dtype=np.float32)
@@ -385,7 +397,6 @@ class HeuristicRolloutCollector(BaseRolloutCollector):
             
             next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
             next_done = np.logical_or(terminations, truncations)
-            
             self.rewards[step] = torch.tensor(reward).to(self.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(self.device), torch.Tensor(next_done).to(self.device)
 
@@ -418,6 +429,137 @@ class HeuristicRolloutCollector(BaseRolloutCollector):
             "obs": self.obs,
             "next_agent_obs": self.next_agent_obs,
             "actions": self.actions,
+            "rewards": self.rewards,
+            "dones": self.dones,
+            "values": self.values,
+            "returns": returns,
+            "advantages": advantages,
+        }
+
+        return results
+
+class BaseBlockingRolloutCollector(BaseRolloutCollector):
+    def __init__(self, args, agent, envs, writer, device, human_agent, agent_single_action_space):
+        super().__init__(args, agent, envs, writer, device, human_agent, agent_single_action_space)
+
+    def collect_rollouts(self, global_step):
+        next_obs, infos = self.envs.reset(seed=self.args.seed)
+        next_obs = torch.Tensor(next_obs).to(self.device)
+        next_done = torch.zeros(self.args.num_envs).to(self.device)
+        
+        # Track the latest observations and infos for each environment
+        latest_obs = next_obs.clone()
+        latest_infos = infos
+        
+        # Store the full observation history for each environment
+        # This will be used by compute_next_agent_obs
+        self.obs_history = [next_obs.clone() for _ in range(self.args.num_envs)]
+        self.infos_history = [infos for _ in range(self.args.num_envs)]
+        total_steps = 0
+
+        accumulated_reward = torch.zeros(self.args.num_envs).to(self.device)
+        freeze_accumulated_reward = torch.zeros(self.args.num_envs).to(self.device)
+        freeze_done = torch.zeros(self.args.num_envs).to(self.device)
+        freezed_id = torch.where(freeze_accumulated_reward != 0)[0]
+        
+        for step in range(0, self.args.num_steps//5):
+            global_step += self.args.num_envs
+            self.dones[step] = next_done
+            self.dones[step][freezed_id] = freeze_done[freezed_id]
+
+            # ALGO LOGIC: action logic
+            with torch.no_grad():
+                next_agent_obs = self.compute_next_agent_obs(next_obs, infos)
+                action, logprob, _, value = self.agent.get_action_and_value(next_agent_obs)
+                self.values[step] = value.flatten()
+            self.actions[step] = action
+            self.logprobs[step] = logprob
+            self.next_agent_obs[step] = next_agent_obs
+
+            # Calculate the number of steps to accumulate rewards for each environment
+            # action[-1] is the last element of the action vector for each environment
+            steps_to_accumulate = (action[:, -1] * 2 + 3).cpu().numpy() + self.args.rollout_reward_buffer_steps
+            max_steps = int(np.max(steps_to_accumulate))
+
+            accumulated_reward = torch.zeros(self.args.num_envs).to(self.device)
+            freeze_accumulated_reward = torch.zeros(self.args.num_envs).to(self.device)
+            freeze_done = torch.zeros(self.args.num_envs).to(self.device)
+            
+            for i in range(max_steps):
+                self.full_next_agent_obs[total_steps] = self.compute_next_agent_obs(next_obs, infos)
+                # TRY NOT TO MODIFY: execute the game and log data.
+                human_action, overwrite_flag = self.human_agent.get_action(latest_obs, latest_infos['utterance'])
+                full_actions = np.concatenate([action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
+                
+                # TRY NOT TO MODIFY: execute the game and log data.
+                next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
+                
+                # Update latest observations and infos
+                latest_obs = torch.Tensor(next_obs).to(self.device)
+                latest_infos = infos
+                
+                # Update the observation history for each environment
+                for env_idx in range(self.args.num_envs):
+                    # If the environment is done, reset its history
+                    if next_done[env_idx]:
+                        self.obs_history[env_idx] = latest_obs[env_idx].unsqueeze(0)
+                        self.infos_history[env_idx] = {k: v[env_idx] if isinstance(v, np.ndarray) else v for k, v in latest_infos.items()}
+                    else:
+                        # Append the new observation to the history
+                        self.obs_history[env_idx] = torch.cat([self.obs_history[env_idx], latest_obs[env_idx].unsqueeze(0)], dim=0)
+                        # Update the infos history (this is a simplified approach, adjust as needed)
+                        self.infos_history[env_idx] = {k: v[env_idx] if isinstance(v, np.ndarray) else v for k, v in latest_infos.items()}
+
+                next_done = np.logical_or(terminations, truncations)
+                
+                accumulated_reward += torch.tensor(reward).to(self.device).view(-1)
+                next_obs, next_done = torch.Tensor(next_obs).to(self.device), torch.Tensor(next_done).to(self.device)
+
+                # Log episode data more efficiently
+                if next_done.any():
+                    # Get indices of done episodes
+                    done_indices = torch.where(next_done)[0]
+                    for i in done_indices:
+                        i = i.item()  # Convert to Python int for indexing
+                        self.writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
+                        self.writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
+
+                    freeze_accumulated_reward[done_indices] = accumulated_reward[done_indices]
+                    freeze_done[done_indices] = next_done[done_indices]
+
+                # Check if we've reached the required number of steps for each environment
+                complete_indices = torch.where(torch.tensor(i >= steps_to_accumulate - 1).to(self.device))[0]
+                freeze_accumulated_reward[complete_indices] = accumulated_reward[complete_indices]
+                total_steps += 1
+
+                action = torch.tensor(np.array([[1,0,0]]* self.args.num_envs), dtype=torch.long).to(self.device) 
+                    
+            freezed_id = torch.where(freeze_accumulated_reward != 0)[0]
+            self.rewards[step] = accumulated_reward
+            self.rewards[step][freezed_id] = freeze_accumulated_reward[freezed_id]
+
+        # bootstrap value if not done
+        with torch.no_grad():
+            next_value = self.agent.get_value(next_agent_obs).reshape(1, -1)
+            advantages = torch.zeros_like(self.rewards).to(self.device)
+            lastgaelam = 0
+            for t in reversed(range(self.args.num_steps)):
+                if t == self.args.num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - self.dones[t + 1]
+                    nextvalues = self.values[t + 1]
+                delta = self.rewards[t] + self.args.gamma * nextvalues * nextnonterminal - self.values[t]
+                advantages[t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + self.values
+
+        results = {
+            "global_step": global_step,
+            "obs": self.obs,
+            "next_agent_obs": self.next_agent_obs,
+            "actions": self.actions,
+            "logprobs": self.logprobs,
             "rewards": self.rewards,
             "dones": self.dones,
             "values": self.values,

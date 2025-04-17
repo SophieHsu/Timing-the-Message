@@ -17,9 +17,9 @@ from configs.args import Args
 from agents.mlp import MLPAgent, NotifierMLPAgent
 from agents.lstm import LSTMAgent, NotifierLSTMAgent
 from agents.transformers import TransformerAgent 
-from agents.humans import HumanAgent
+from agents.humans import HumanAgent, HumanDriverAgent
 from agents.heuristic import HeuristicAgent
-from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer, HeuristicTrainer
+from utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer, HeuristicTrainer, BlockingTrainer
 from utils.util import make_env
 
 os.environ["OFFSCREEN_RENDERING"] = "1"
@@ -78,8 +78,11 @@ def main():
 
     # Human agent
     human_agent = None
-    if args.human_agent_type is not None:
-        human_agent = HumanAgent(envs, args, device)
+    if args.human_agent_type is not None and args.human_agent_type != "None":
+        if args.human_agent_type == "IDM":
+            human_agent = HumanDriverAgent(envs, args, device)
+        else:
+            human_agent = HumanAgent(envs, args, device)
 
         # Notifier agent
         if args.agent_type == "mlp":
@@ -96,14 +99,16 @@ def main():
     #     notifier_agent = NotifierAgent(envs, args).to(device)
         
     # Train agent
-    if args.agent_type == "mlp":
+    if args.trainer_type == "base":
         trainer = BaseTrainer(agent, envs, args, writer, run_name, device, human_agent)
-    elif args.agent_type == "lstm":
+    elif args.trainer_type == "lstm":
         trainer = LSTMTrainer(agent, envs, args, writer, run_name, device, human_agent)
-    elif args.agent_type == "transformer":
+    elif args.trainer_type == "transformer":
         trainer = TransformerTrainer(agent, envs, args, writer, run_name, device, human_agent)
-    elif args.agent_type == "heuristic":
+    elif args.trainer_type == "heuristic":
         trainer = HeuristicTrainer(agent, envs, args, writer, run_name, device, human_agent)
+    elif args.trainer_type == "blocking":
+        trainer = BlockingTrainer(agent, envs, args, writer, run_name, device, human_agent)
     trainer.train()
 
 if __name__ == "__main__":

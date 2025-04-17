@@ -11,9 +11,9 @@ import random
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector
+from utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector, BaseBlockingRolloutCollector
 from utils.util import make_env
-from utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator
+from utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator, BaseBlockingEvaluator
 
 
 class BaseTrainer:
@@ -57,7 +57,6 @@ class BaseTrainer:
             global_step = results["global_step"]
             
             # flatten the batch
-            b_obs = results["obs"].reshape((-1,) + envs.single_observation_space.shape)
             b_next_agent_obs = results["next_agent_obs"].reshape((-1,) + (self.agent.single_observation_space,))
             b_logprobs = results["logprobs"].reshape(-1)
             b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
@@ -201,7 +200,6 @@ class LSTMTrainer(BaseTrainer):
             next_lstm_state = results["next_lstm_state"]
             
             # flatten the batch
-            b_obs = results["obs"].reshape((-1,) + self.envs.single_observation_space.shape)
             b_next_agent_obs = results["next_agent_obs"].reshape((-1,) + (self.agent.single_observation_space,))
             b_logprobs = results["logprobs"].reshape(-1)
             b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
@@ -352,7 +350,6 @@ class TransformerTrainer(BaseTrainer):
             results = self.rollout_collector.collect_rollouts(global_step)
             global_step = results["global_step"]
             # flatten the batch
-            b_obs = results["obs"].reshape((-1,) + envs.single_observation_space.shape)
             b_logprobs = results["logprobs"].reshape(-1)
             b_actions = results["actions"].reshape((-1,) + self.agent_single_action_space)
             b_advantages = results["advantages"].reshape(-1)
@@ -510,3 +507,11 @@ class HeuristicTrainer(BaseTrainer):
 
         self.envs.close()
         self.writer.close()
+
+
+class BlockingTrainer(BaseTrainer):
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent):
+        super().__init__(agent, envs, args, writer, run_name, device, human_agent)
+        self.rollout_collector = BaseBlockingRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
+        self.evaluator = BaseBlockingEvaluator(args, run_name)
+        
