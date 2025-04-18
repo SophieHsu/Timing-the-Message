@@ -1662,6 +1662,12 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
 
         reward = 0
         info = {}
+
+        # cost for speaking
+        if noti_action[0] == 2:
+            reward -= 0.3
+
+
         shaping = (
             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
@@ -1748,6 +1754,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             sleep_reward = -300  # Increased failure penalty
             self.reward_components["sleep"] = sleep_reward
             reward = sleep_reward
+        
         
         # Store the current reward for display
         self.current_reward = reward

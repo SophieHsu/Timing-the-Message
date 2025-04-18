@@ -103,7 +103,7 @@ class HumanAgent:
         continue_overwrite_idx = np.where((self.overwrite_action != -1) & (self.track_overwrite > 0))[0]
         self.track_overwrite[continue_overwrite_idx] += 1
 
-        start_overwrite_idx = np.where((self.tmp_overwrite_action != -1) & (self.track_reaction_delay >= (self.reaction_delay+1)))[0]
+        start_overwrite_idx = np.where((self.tmp_overwrite_action != -1) & (self.track_reaction_delay >= self.reaction_delay))[0]
         self.overwrite_action[start_overwrite_idx] = self.tmp_overwrite_action[start_overwrite_idx]
         self.track_overwrite[start_overwrite_idx] = 1
         self.track_reaction_delay[start_overwrite_idx] = 0

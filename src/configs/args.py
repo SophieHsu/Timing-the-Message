@@ -16,14 +16,14 @@ class Args:
     capture_video: bool = False
     save_freq: int = 1
     model_path: str = None  # Path to the trained agent model
-    model_run_id: str = "2qqsfw91"
+    model_run_id: str = "03cwsek5" # 03cwsek5
     # Environment settings
     env_id: str = "DangerZoneLunarLander" # "DangerZoneLunarLander" #"multi-merge-v0" "LargeRewardNotiLunarLander"
     total_timesteps: int = int(1e9)
     highway_features_dim: int = 64
 
     # Agent settings
-    agent_type: str = "mlp"  # Options: "mlp", "lstm", "transformer", "heuristic"
+    agent_type: str = "heuristic"  # Options: "mlp", "lstm", "transformer", "heuristic"
     trainer_type: str = "base"  # Options: "base", "lstm", "transformer", "heuristic", "blocking"
     use_condition_head: bool = True
     agent_obs_mode: str = "history" # Options: "history"
@@ -35,7 +35,7 @@ class Args:
     human_agent_path: str = None
     human_utterance_memory_length: int = 10
     human_reaction_delay: int = 0
-    human_comprehend_bool: bool = False
+    human_comprehend_bool: bool = True
 
     # PPO settings
     learning_rate: float = 2.5e-4

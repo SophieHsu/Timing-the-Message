@@ -7,6 +7,8 @@ from pathlib import Path
 import argparse
 from typing import List, Dict, Any
 import matplotlib.patches as mpatches
+from gymnasium_envs.envs.lunar_lander import VIEWPORT_W, VIEWPORT_H, SCALE, LEG_DOWN
+
 
 def convert_numpy_types(obj):
     """Convert NumPy types to Python native types for JSON serialization"""
@@ -33,10 +35,124 @@ def load_trajectory_data(data_dir: str) -> List[Dict[str, Any]]:
     
     return data
 
-def visualize_trajectory(trajectory_data: List[Dict[str, Any]], episode_idx: int, output_dir: str, policy_name: str = ""):
+def plot_xy_trajectory(trajectory_data: List[Dict[str, Any]], episode_idx: int, output_dir: str, policy_name: str = "", danger_zones: List[Dict[str, Any]] = None):
+    """Plot the x-y trajectory with points labeled by event type"""
+    # Create directory for plots if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create figure
+    plt.figure(figsize=(10, 10))
+    
+    # Get environment dimensions
+    W = VIEWPORT_W / SCALE
+    H = VIEWPORT_H / SCALE
+    
+    # Create terrain
+    CHUNKS = 11
+    height = np.full(CHUNKS, H / 4)  # Constant height for flat terrain
+    chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
+    helipad_x1 = chunk_x[CHUNKS // 2 - 1]
+    helipad_x2 = chunk_x[CHUNKS // 2 + 1]
+    helipad_y = H / 4
+
+    # Extract data from trajectory
+    positions_x = [step['observation'][0] * (VIEWPORT_W / SCALE / 2) + (VIEWPORT_W / SCALE / 2) for step in trajectory_data]  # x position
+    positions_y = [step['observation'][1] * (VIEWPORT_H / SCALE / 2) + (helipad_y + LEG_DOWN / SCALE) for step in trajectory_data]  # y position
+    agent_actions_type = [step['agent_action_type'] for step in trajectory_data]
+    overwritten = [step['overwritten'] for step in trajectory_data]
+    
+    # Plot terrain
+    plt.plot(chunk_x, height, 'k-', linewidth=2)
+    
+    # Plot landing pad (green)
+    pad_x = [helipad_x1, helipad_x2]
+    pad_y = [helipad_y, helipad_y]
+    plt.plot(pad_x, pad_y, 'g-', linewidth=4)
+    
+    # Plot flag poles
+    for x in [helipad_x1, helipad_x2]:
+        flagy1 = helipad_y
+        flagy2 = flagy1 + 2
+        plt.plot([x, x], [flagy1, flagy2], 'k-', linewidth=1)
+        plt.fill([x, x, x + 0.5], [flagy2, flagy2 - 0.2, flagy2 - 0.1], 'y')
+    
+    # Add danger zones (if available in the trajectory data)
+    if danger_zones:
+        for zone in danger_zones:
+            x_min = zone[0][0]
+            x_max = zone[0][1]
+            y_min = zone[1][0]
+            y_max = zone[1][1]
+            
+            # Convert normalized coordinates to world coordinates
+            x_min = (x_min + 1) * W/2
+            x_max = (x_max + 1) * W/2
+            y_min = y_min * H/2 + helipad_y
+            y_max = y_max * H/2 + helipad_y
+            
+            width = x_max - x_min
+            height = y_max - y_min
+            
+            plt.gca().add_patch(plt.Rectangle((x_min, y_min), width, height, 
+                                             fill=True, color='red', alpha=0.3))
+    
+    # Plot the full trajectory line
+    plt.plot(positions_x, positions_y, 'k-', alpha=0.3, label='Trajectory')
+    
+    # Plot points for different events
+    # No event points (gray)
+    no_event_indices = [i for i, (t, o) in enumerate(zip(agent_actions_type, overwritten)) 
+                       if t <= 1 and not o]
+    if no_event_indices:
+        plt.scatter([positions_x[i] for i in no_event_indices],
+                  [positions_y[i] for i in no_event_indices],
+                  color='gray', alpha=0.5, label='No Event')
+    
+    # Notification points (blue)
+    notification_indices = [i for i, t in enumerate(agent_actions_type) if t > 1]
+    if notification_indices:
+        plt.scatter([positions_x[i] for i in notification_indices],
+                  [positions_y[i] for i in notification_indices],
+                  color='blue', alpha=0.7, label='Notification')
+    
+    # Overwrite points (red)
+    overwrite_indices = [i for i, o in enumerate(overwritten) if o]
+    if overwrite_indices:
+        plt.scatter([positions_x[i] for i in overwrite_indices],
+                  [positions_y[i] for i in overwrite_indices],
+                  color='red', alpha=0.7, label='Overwrite')
+    
+    # Add start and end markers
+    plt.plot(positions_x[0], positions_y[0], 'go', markersize=10, label='Start')
+    plt.plot(positions_x[-1], positions_y[-1], 'ro', markersize=10, label='End')
+    
+    # Set plot limits and labels
+    plt.xlim(0, W)
+    plt.ylim(0, H)
+    plt.xlabel('X Position')
+    plt.ylabel('Y Position')
+    plt.title(f'X-Y Trajectory - {policy_name} (Episode {episode_idx})')
+    plt.grid(True)
+    plt.legend()
+    
+    # Create a more organized directory structure
+    trajectory_dir = os.path.join(output_dir, "trajectories")
+    os.makedirs(trajectory_dir, exist_ok=True)
+    
+    # Save plot to file with a more descriptive filename
+    plot_path = f"{trajectory_dir}/{policy_name}_episode_{episode_idx}_xy_trajectory.png"
+    plt.savefig(plot_path)
+    plt.close()
+    
+    return plot_path
+
+def visualize_trajectory(trajectory_data: List[Dict[str, Any]], episode_idx: int, output_dir: str, policy_name: str = "", danger_zones: List[Dict[str, Any]] = None):
     """Visualize a single trajectory with emphasis on key time points"""
     # Create directory for plots if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create figure with subplots
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12), height_ratios=[2, 1, 2])
     
     # Extract data from trajectory
     steps = list(range(len(trajectory_data)))
@@ -46,11 +162,10 @@ def visualize_trajectory(trajectory_data: List[Dict[str, Any]], episode_idx: int
     human_actions = [step['human_action'] for step in trajectory_data]
     overwritten = [step['overwritten'] for step in trajectory_data]
     rewards = [step['reward'] for step in trajectory_data]
+    positions_x = [step['observation'][0] for step in trajectory_data]
+    positions_y = [step['observation'][1] for step in trajectory_data]
     
-    # Create figure with subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    
-    # Plot actions
+    # Plot actions in first subplot
     ax1.set_title(f'Notifications and Human Actions Over Time - {policy_name} (Episode {episode_idx})')
     ax1.set_ylabel('Value')
     
@@ -74,50 +189,77 @@ def visualize_trajectory(trajectory_data: List[Dict[str, Any]], episode_idx: int
     ax1.scatter(cont_steps, cont_actions, color='blue', marker='x', label='Cont.', alpha=0.7)
     
     # Plot notifications with different colors based on length
-    noti_l3_steps = [i for i, l in enumerate(agent_actions_length) if l == 2]
-    noti_l3_actions = [agent_actions[i] for i in noti_l3_steps]
-    ax1.scatter(noti_l3_steps, noti_l3_actions, color='red', marker='x', label='l=2', alpha=0.7)
+    for length, color in [(2, 'red'), (3, 'orange'), (4, 'yellow'), (5, 'green')]:
+        steps_l = [i for i, l in enumerate(agent_actions_length) if l == length]
+        actions = [agent_actions[i] for i in steps_l]
+        ax1.scatter(steps_l, actions, color=color, marker='x', label=f'l={length}', alpha=0.7)
     
-    noti_l4_steps = [i for i, l in enumerate(agent_actions_length) if l == 3]
-    noti_l4_actions = [agent_actions[i] for i in noti_l4_steps]
-    ax1.scatter(noti_l4_steps, noti_l4_actions, color='orange', marker='x', label='l=3', alpha=0.7)
-    
-    noti_l5_steps = [i for i, l in enumerate(agent_actions_length) if l == 4]
-    noti_l5_actions = [agent_actions[i] for i in noti_l5_steps]
-    ax1.scatter(noti_l5_steps, noti_l5_actions, color='yellow', marker='x', label='l=4', alpha=0.7)
-    
-    noti_l6_steps = [i for i, l in enumerate(agent_actions_length) if l == 5]
-    noti_l6_actions = [agent_actions[i] for i in noti_l6_steps]
-    ax1.scatter(noti_l6_steps, noti_l6_actions, color='green', marker='x', label='l=5', alpha=0.7)
-    
-    # Set y-axis limits to match the image style
     ax1.set_ylim(-1, 3.5)
-    
-    # Move legend to bottom of figure
     ax1.legend(bbox_to_anchor=(0, 0), loc='lower left', ncol=8)
-
     ax1.grid(True, alpha=0.3)
     
-    # Plot rewards
+    # Plot rewards in second subplot
     ax2.set_title('Rewards')
-    ax2.set_xlabel('Step')
     ax2.set_ylabel('Reward')
     ax2.plot(steps, rewards, 'k-', label='Reward')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
+    # Plot x-y trajectory in third subplot
+    ax3.set_title('X-Y Trajectory')
+    ax3.plot(positions_x, positions_y, 'k-', alpha=0.3, label='Trajectory')
+    
+    # Plot points for different events
+    no_event_indices = [i for i, (t, o) in enumerate(zip(agent_actions_type, overwritten)) 
+                       if t <= 1 and not o]
+    if no_event_indices:
+        ax3.scatter([positions_x[i] for i in no_event_indices],
+                   [positions_y[i] for i in no_event_indices],
+                   color='gray', alpha=0.5, label='No Event')
+    
+    notification_indices = [i for i, t in enumerate(agent_actions_type) if t > 1]
+    if notification_indices:
+        ax3.scatter([positions_x[i] for i in notification_indices],
+                   [positions_y[i] for i in notification_indices],
+                   color='blue', alpha=0.7, label='Notification')
+    
+    overwrite_indices = [i for i, o in enumerate(overwritten) if o]
+    if overwrite_indices:
+        ax3.scatter([positions_x[i] for i in overwrite_indices],
+                   [positions_y[i] for i in overwrite_indices],
+                   color='red', alpha=0.7, label='Overwrite')
+    
+    ax3.scatter(positions_x[0], positions_y[0], color='green', marker='^', s=100, label='Start')
+    ax3.scatter(positions_x[-1], positions_y[-1], color='red', marker='v', s=100, label='End')
+    
+    ax3.set_xlabel('X Position')
+    ax3.set_ylabel('Y Position')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     
-    # Save plot to file
-    plot_path = f"{output_dir}/episode_{episode_idx}.png"
+    # Create a more organized directory structure
+    detailed_dir = os.path.join(output_dir, "detailed")
+    os.makedirs(detailed_dir, exist_ok=True)
+    
+    # Save plot to file with a more descriptive filename
+    plot_path = f"{detailed_dir}/{policy_name}_episode_{episode_idx}_detailed.png"
     plt.savefig(plot_path)
     plt.close()
+    
+    # Also create a separate x-y trajectory plot
+    xy_plot_path = plot_xy_trajectory(trajectory_data, episode_idx, output_dir, policy_name, danger_zones)
     
     return plot_path
 
 def visualize_comparison(trajectories: List[Dict[str, Any]], episode_indices: List[int], policy_names: List[str], output_dir: str):
     """Create a comparison visualization of trajectories from different policies"""
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a more organized directory structure
+    comparison_dir = os.path.join(output_dir, "comparisons")
+    os.makedirs(comparison_dir, exist_ok=True)
     
     # Create a figure with subplots for each episode
     fig, axes = plt.subplots(len(episode_indices), 2, figsize=(15, 5 * len(episode_indices)), sharex=True)
@@ -192,8 +334,13 @@ def visualize_comparison(trajectories: List[Dict[str, Any]], episode_indices: Li
     
     plt.tight_layout()
     
-    # Save plot to file
-    plot_path = f"{output_dir}/comparison_episodes_{'_'.join(map(str, episode_indices))}.png"
+    # Save plot to file with a more descriptive filename
+    # Use shorter filenames to avoid "filename too long" error
+    episode_str = '_'.join(map(str, episode_indices))
+    # Create abbreviated policy names
+    abbreviated_policy_names = [name.split('_')[0] for name in policy_names]
+    policy_str = '_'.join(abbreviated_policy_names)
+    plot_path = f"{comparison_dir}/comp_ep{episode_str}_pol{policy_str}.png"
     plt.savefig(plot_path)
     plt.close()
     
@@ -202,6 +349,10 @@ def visualize_comparison(trajectories: List[Dict[str, Any]], episode_indices: Li
 def create_highlighted_comparison(trajectories: List[Dict[str, Any]], episode_indices: List[int], policy_names: List[str], output_dir: str):
     """Create a comparison visualization with highlighted key time points"""
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a more organized directory structure
+    comparison_dir = os.path.join(output_dir, "comparisons")
+    os.makedirs(comparison_dir, exist_ok=True)
     
     # Create a figure with subplots for each episode
     fig, axes = plt.subplots(len(episode_indices), 1, figsize=(15, 5 * len(episode_indices)), sharex=True)
@@ -291,8 +442,13 @@ def create_highlighted_comparison(trajectories: List[Dict[str, Any]], episode_in
     
     plt.tight_layout()
     
-    # Save plot to file
-    plot_path = f"{output_dir}/highlighted_comparison_episodes_{'_'.join(map(str, episode_indices))}.png"
+    # Save plot to file with a more descriptive filename
+    # Use shorter filenames to avoid "filename too long" error
+    episode_str = '_'.join(map(str, episode_indices))
+    # Create abbreviated policy names
+    abbreviated_policy_names = [name.split('_')[0] for name in policy_names]
+    policy_str = '_'.join(abbreviated_policy_names)
+    plot_path = f"{comparison_dir}/highlight_ep{episode_str}_pol{policy_str}.png"
     plt.savefig(plot_path)
     plt.close()
     
@@ -301,6 +457,10 @@ def create_highlighted_comparison(trajectories: List[Dict[str, Any]], episode_in
 def create_notification_overwrite_comparison(trajectories: List[Dict[str, Any]], episode_indices: List[int], policy_names: List[str], output_dir: str):
     """Create a comparison visualization focusing on notification and overwrite timing"""
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a more organized directory structure
+    comparison_dir = os.path.join(output_dir, "comparisons")
+    os.makedirs(comparison_dir, exist_ok=True)
     
     # Create a figure with subplots for each episode
     fig, axes = plt.subplots(len(episode_indices), 1, figsize=(15, 5 * len(episode_indices)), sharex=True)
@@ -342,7 +502,9 @@ def create_notification_overwrite_comparison(trajectories: List[Dict[str, Any]],
         axes[i].set_yticklabels(['Events'])
         
         # Add custom colorbar
-        cbar = plt.colorbar(plt.cm.ScalarMappable(cmap=cmap, vmin=0, vmax=2), ax=axes[i], ticks=[0.5, 1.5])
+        sm = plt.cm.ScalarMappable(cmap=cmap)
+        sm.set_clim(0, 2)
+        cbar = plt.colorbar(sm, ax=axes[i], ticks=[0, 1, 2])
         cbar.set_ticklabels(['No Event', 'Notification', 'Overwrite'])
         
         # Add grid
@@ -353,8 +515,10 @@ def create_notification_overwrite_comparison(trajectories: List[Dict[str, Any]],
     
     plt.tight_layout()
     
-    # Save plot to file
-    plot_path = f"{output_dir}/notification_overwrite_timeline_episodes_{'_'.join(map(str, episode_indices))}.png"
+    # Save plot to file with a more descriptive filename
+    episode_str = '_'.join(map(str, episode_indices))
+    policy_str = '_'.join(policy_names)
+    plot_path = f"{comparison_dir}/notification_overwrite_timeline_episodes_{episode_str}_policies_{policy_str}.png"
     plt.savefig(plot_path)
     plt.close()
     
@@ -366,7 +530,8 @@ def main():
     parser.add_argument('--policy_names', type=str, nargs='+', help='Names of policies (default: directory names)')
     parser.add_argument('--num_episodes', type=int, default=5, help='Number of episodes to visualize per policy')
     parser.add_argument('--output_dir', type=str, default='plots/trajectories', help='Output directory for plots')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for reproducibility')
+    parser.add_argument('--rand_episodes', type=bool, default=False, help='Randomly select episodes to visualize')
     
     args = parser.parse_args()
     
@@ -394,14 +559,20 @@ def main():
     
     # Randomly select episodes to visualize
     selected_episodes = []
-    for i, data in enumerate(all_data):
-        if len(data) > args.num_episodes:
-            episodes = random.sample(range(len(data)), args.num_episodes)
-        else:
-            episodes = list(range(len(data)))
-        
-        selected_episodes.append(episodes)
-        print(f"Selected episodes {episodes} for policy {args.policy_names[i]}")
+    if args.rand_episodes:
+        for i, data in enumerate(all_data):
+            if len(data) > args.num_episodes:
+                episodes = random.sample(range(len(data)), args.num_episodes)
+            else:
+                episodes = list(range(len(data)))
+            
+            selected_episodes.append(episodes)
+            print(f"Selected episodes {episodes} for policy {args.policy_names[i]}")
+    else:
+        for i, data in enumerate(all_data):
+            episodes = list(range(5))
+            selected_episodes.append(episodes)
+            print(f"Selected episodes {episodes} for policy {args.policy_names[i]}")
     
     # Visualize individual episodes
     for i, (data, policy_name, episodes) in enumerate(zip(all_data, args.policy_names, selected_episodes)):
@@ -410,7 +581,8 @@ def main():
         
         for episode_idx in episodes:
             trajectory_data = data[episode_idx]['trajectory']
-            plot_path = visualize_trajectory(trajectory_data, episode_idx, policy_dir, policy_name)
+            danger_zones = None if 'danger_zones' not in data[episode_idx] else data[episode_idx]['danger_zones']
+            plot_path = visualize_trajectory(trajectory_data, episode_idx, policy_dir, policy_name, danger_zones)
             print(f"Saved visualization for episode {episode_idx} to {plot_path}")
     
     # If we have multiple policies, create comparison visualizations

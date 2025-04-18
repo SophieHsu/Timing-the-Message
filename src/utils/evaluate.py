@@ -635,7 +635,7 @@ class HeuristicEvaluator(BaseEvaluator):
             agent_actions, _, _, _ = agent.get_action_and_value(next_agent_obs)
 
             human_actions, overwrite_flag = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
-            actions = np.concatenate([agent_actions.cpu().numpy(), human_actions.cpu().numpy().reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
+            actions = np.concatenate([agent_actions.cpu().numpy(), human_actions.reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
             human_action = human_actions.item()
             
             # Execute action

@@ -17,6 +17,7 @@ from src.utils.util import make_env
 from src.agents.mlp import NotifierMLPAgent
 from src.agents.lstm import NotifierLSTMAgent
 from src.agents.transformers import TransformerAgent
+from src.agents.heuristic import HeuristicAgent
 from src.agents.humans import HumanAgent, HumanDriverAgent
 
 os.environ["OFFSCREEN_RENDERING"] = "1"
@@ -62,23 +63,29 @@ def main():
         agent = NotifierLSTMAgent(envs, args).to(device)
     elif args.agent_type == "transformer":
         agent = TransformerAgent(envs, args).to(device)
+    elif args.agent_type == "heuristic":
+        agent = HeuristicAgent(envs, args)
     else:
         raise ValueError(f"Unknown agent type: {args.agent_type}")
     
-    # Load the trained agent
-    api = wandb.Api()
-    run = api.run(f"yachuanh/timing/{args.model_run_id}")
+    # For heuristic agent, we don't need to load weights from wandb
+    if args.agent_type != "heuristic":
+        # Load the trained agent
+        api = wandb.Api()
+        run = api.run(f"yachuanh/timing/{args.model_run_id}")
+        model_path = run.config['filepath'] + "/agent.pt"
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        agent.eval()
+
+        output_dir = Path(f"data/{args.model_run_id}_convey{run.config['human_comprehend_bool']}_delay{run.config['human_reaction_delay']}_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
 
     # Create output directory for data
-    output_dir = Path(f"data/{args.model_run_id}_convey{run.config['human_comprehend_bool']}_delay{run.config['human_reaction_delay']}_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
+    if args.agent_type == 'heuristic':
+        output_dir = Path(f"data/heuristic_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
+        
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    model_path = run.config['filepath'] + "/agent.pt"
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-    
-    agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-    agent.eval()
     
     # Set up for data collection
     single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*args.human_utterance_memory_length
@@ -159,7 +166,7 @@ def main():
                         },
                         'terminated': bool(terminations[env_idx]),
                         'truncated': bool(truncations[env_idx]),
-                        'info': {k: v[env_idx].tolist() if isinstance(v, np.ndarray) else v for k, v in infos.items()}
+                        'info': {k: v[env_idx].tolist() if isinstance(v, np.ndarray) else v for k, v in infos.items()},
                     }
                     
                     # Add to episode data
@@ -177,6 +184,10 @@ def main():
                             'num_steps': int(steps[env_idx]),
                             'trajectory': episode_data[env_idx]
                         }
+                        try:
+                            episode_summary['danger_zones'] = envs.envs[env_idx].unwrapped.danger_zones
+                        except:
+                            pass
                         
                         # Add to all episodes data
                         all_episodes_data.append(episode_summary)
