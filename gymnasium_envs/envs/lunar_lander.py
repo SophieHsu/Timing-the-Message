@@ -322,7 +322,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         else:
             # Nop, fire left engine, main engine, right engine
             # self.action_space = spaces.Tuple((spaces.Discrete(2), spaces.Discrete(12), spaces.Discrete(2), spaces.Discrete(4)))
-            self.action_space = spaces.MultiDiscrete([3, 3, 2, 4])
+            self.action_space = spaces.MultiDiscrete([3, 3, 1, 4])
+            # self.action_space = spaces.MultiDiscrete([3, 3, 2, 4])
 
         self.render_mode = render_mode
         self.human_agent_idx = human_agent_idx
@@ -1664,9 +1665,12 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         info = {}
 
         # cost for speaking
+        noti_penalty = -1 #-0.3
         if noti_action[0] == 2:
-            reward -= 0.3
-
+            reward += noti_penalty
+            self.reward_components["noti_penalty"] = noti_penalty
+        else:
+            self.reward_components["noti_penalty"] = 0
 
         shaping = (
             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
@@ -1679,6 +1683,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         if self.prev_shaping is not None:
             reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
+        self.reward_components["shaping"] = shaping
 
         reward -= (
             m_power * 0.30
@@ -1688,14 +1693,14 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
 
         # Danger zone penalties
-        danger_zone_penalty = -10 * (
+        danger_zone_penalty = -30 * (
             max(0.2 - state[8], 0) +  # left danger zone
             max(0.2 - state[9], 0) +  # right danger zone
             max(0.2 - state[10], 0) + # top danger zone
             max(0.2 - state[11], 0)   # bottom danger zone
         )
         self.reward_components["danger_zone"] = danger_zone_penalty
-        in_danger_zone = state[8] <= 0 and state[9] <= 0 and state[10] <= 0 and state[11] <= 0
+        in_danger_zone = (state[8] <= 0 and state[9] <= 0 and state[10] <= 0 and state[11] <= 0)
 
         # Reward for moving away from danger zones
         danger_avoidance_reward = 0
@@ -1713,7 +1718,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
                 if state[8+i] > prev_danger_distances[i]:
                     danger_avoidance_reward += 0.1  # Reward for moving away from danger zones
             
-        self.reward_components["danger_avoidance"] = danger_avoidance_reward
+        # self.reward_components["danger_avoidance"] = danger_avoidance_reward
 
         # # Stronger penalty for being inside danger zones
         if in_danger_zone:
@@ -1721,13 +1726,13 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         else:
             in_danger_zone_penalty = 0
         
-        # self.reward_components["in_danger_zone"] = in_danger_zone_penalty
+        self.reward_components["in_danger_zone"] = in_danger_zone_penalty
         
         # Add a small time penalty to encourage faster landings
          
-        self.reward_components["time_penalty"] = self.time_penalty
+        # self.reward_components["time_penalty"] = self.time_penalty
         
-        reward += danger_zone_penalty + self.time_penalty + in_danger_zone_penalty#+ danger_avoidance_reward
+        reward += danger_zone_penalty + in_danger_zone_penalty#+ danger_avoidance_reward
 
         terminated = False
         truncated = False

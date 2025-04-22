@@ -298,7 +298,20 @@ def analyze_notifications(data: List[Dict[str, Any]], output_dir: str, policy_na
     }
 
 def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
-    """Analyze interactions with danger zones"""
+    """Analyze interactions with danger zones or road hazards"""
+    # Check if the data contains danger zone information
+    if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
+        print("No trajectory data found for danger zone analysis")
+        return {}
+    
+    # Check if the first trajectory step has danger zone information
+    first_step = data[0]['trajectory'][0]
+    has_danger_zones = 'distance_to_danger' in first_step
+    
+    if not has_danger_zones:
+        print("No danger zone information found in trajectory data")
+        return {}
+    
     danger_zone_distances = {
         'left': [],
         'right': [],
@@ -324,17 +337,19 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
         for i, step in enumerate(trajectory):
             # Record distances to danger zones
             for direction in danger_zone_distances:
-                danger_zone_distances[direction].append(step['distance_to_danger'][direction])
+                if direction in step['distance_to_danger'] and step['distance_to_danger'][direction] is not None:
+                    danger_zone_distances[direction].append(step['distance_to_danger'][direction])
             
             # Check if there's a notification and record the distances at that time
             if step['agent_action_type'] == 2:  # Notification
                 for direction in danger_zone_notifications:
-                    danger_zone_notifications[direction].append(step['distance_to_danger'][direction])
+                    if direction in step['distance_to_danger'] and step['distance_to_danger'][direction] is not None:
+                        danger_zone_notifications[direction].append(step['distance_to_danger'][direction])
             
             # Check if entry into any danger zone occurred
             if not entry_occurred:
                 for direction, distance in step['distance_to_danger'].items():
-                    if distance <= 0:  # Entry into danger zone
+                    if distance is not None and distance <= 0:  # Entry into danger zone
                         entry_occurred = True
                         episodes_with_entry += 1
                         steps_to_entry.append(i)
@@ -351,12 +366,13 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
     plt.figure(figsize=(12, 8))
     
     for i, (direction, distances) in enumerate(danger_zone_distances.items()):
-        plt.subplot(2, 2, i+1)
-        sns.histplot(distances, kde=True)
-        plt.title(f'{direction.capitalize()} Danger Zone Distance')
-        plt.xlabel('Distance')
-        plt.ylabel('Frequency')
-        plt.grid(True, alpha=0.3)
+        if distances:  # Only create subplot if we have data
+            plt.subplot(2, 2, i+1)
+            sns.histplot(distances, kde=True)
+            plt.title(f'{direction.capitalize()} Danger Zone Distance')
+            plt.xlabel('Distance')
+            plt.ylabel('Frequency')
+            plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/danger_zone_distances_{policy_name}.png")
@@ -384,12 +400,13 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
     # Calculate statistics
     danger_zone_stats = {}
     for direction, distances in danger_zone_distances.items():
-        danger_zone_stats[direction] = {
-            'mean': np.mean(distances),
-            'std': np.std(distances),
-            'min': np.min(distances),
-            'max': np.max(distances)
-        }
+        if distances:  # Only calculate stats if we have data
+            danger_zone_stats[direction] = {
+                'mean': np.mean(distances),
+                'std': np.std(distances),
+                'min': np.min(distances),
+                'max': np.max(distances)
+            }
     
     # Create a summary DataFrame
     summary_data = []
@@ -426,172 +443,213 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
     }
 
 def analyze_trajectory_patterns(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
-    """Analyze patterns in the trajectories"""
+    """Analyze trajectory patterns and visualize them"""
+    # Check if the data contains trajectory information
+    if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
+        print("No trajectory data found for trajectory pattern analysis")
+        return {}
+    
     # Extract trajectory data
     trajectories = []
     for episode in data:
         trajectory = []
         for step in episode['trajectory']:
-            trajectory.append({
-                'x': step['observation'][0],
-                'y': step['observation'][1],
-                'vx': step['observation'][2],
-                'vy': step['observation'][3],
-                'angle': step['observation'][4],
-                'angular_velocity': step['observation'][5],
-                'left_leg_contact': step['observation'][6],
-                'right_leg_contact': step['observation'][7],
-                'notification': step['agent_action_type'] == 2,
-                'overwritten': step['overwritten'] == 1
-            })
+            # Extract position information if available
+            position = {}
+            
+            # For Lunar Lander, positions are in the observation
+            if 'observation' in step and len(step['observation']) >= 2:
+                position['x'] = step['observation'][0]
+                position['y'] = step['observation'][1]
+            
+            # For Highway environment, check if vehicle position is available
+            elif 'info' in step and 'vehicle_position' in step['info']:
+                position['x'] = step['info']['vehicle_position'][0]
+                position['y'] = step['info']['vehicle_position'][1]
+            
+            # Add action information
+            action = {
+                'agent_action': step['agent_action'],
+                'human_action': step['human_action'],
+                'overwritten': step['overwritten']
+            }
+            
+            # Add position and action to trajectory step
+            trajectory_step = {**position, **action}
+            trajectory.append(trajectory_step)
+        
         trajectories.append(trajectory)
     
-    # Calculate average trajectory
-    max_length = max(len(traj) for traj in trajectories)
-    padded_trajectories = [traj + [traj[-1]] * (max_length - len(traj)) for traj in trajectories]
+    # Check if we have position data
+    has_position_data = any('x' in step for trajectory in trajectories for step in trajectory)
     
-    # Fix: Extract x, y, etc. values from each trajectory step
-    x_values = [[step['x'] for step in traj] for traj in padded_trajectories]
-    y_values = [[step['y'] for step in traj] for traj in padded_trajectories]
-    vx_values = [[step['vx'] for step in traj] for traj in padded_trajectories]
-    vy_values = [[step['vy'] for step in traj] for traj in padded_trajectories]
-    angle_values = [[step['angle'] for step in traj] for traj in padded_trajectories]
-    angular_velocity_values = [[step['angular_velocity'] for step in traj] for traj in padded_trajectories]
+    if not has_position_data:
+        print("No position data found in trajectory data")
+        return {}
     
-    avg_trajectory = {
-        'x': np.mean(x_values, axis=0),
-        'y': np.mean(y_values, axis=0),
-        'vx': np.mean(vx_values, axis=0),
-        'vy': np.mean(vy_values, axis=0),
-        'angle': np.mean(angle_values, axis=0),
-        'angular_velocity': np.mean(angular_velocity_values, axis=0)
-    }
+    # Create trajectory visualization
+    plt.figure(figsize=(12, 8))
     
-    # Plot average trajectory
-    plt.figure(figsize=(10, 10))
-    plt.plot(avg_trajectory['x'], avg_trajectory['y'], 'b-', label='Average Trajectory')
+    # Plot a subset of trajectories (up to 10) to avoid overcrowding
+    num_trajectories = min(10, len(trajectories))
+    colors = plt.cm.viridis(np.linspace(0, 1, num_trajectories))
     
-    # Add landing pad
-    plt.plot([-0.2, 0.2], [0, 0], 'g-', linewidth=3, label='Landing Pad')
+    for i, trajectory in enumerate(trajectories[:num_trajectories]):
+        x_coords = [step.get('x', 0) for step in trajectory if 'x' in step]
+        y_coords = [step.get('y', 0) for step in trajectory if 'y' in step]
+        
+        if x_coords and y_coords:
+            plt.plot(x_coords, y_coords, color=colors[i], alpha=0.7, label=f'Trajectory {i+1}')
+            
+            # Mark start and end points
+            plt.scatter(x_coords[0], y_coords[0], color=colors[i], marker='o', s=50)
+            plt.scatter(x_coords[-1], y_coords[-1], color=colors[i], marker='x', s=50)
     
-    # Add danger zones if available
-    if 'danger_zones' in data[0]:
-        danger_zones = data[0]['danger_zones']
-        for zone in danger_zones:
-            x_min, x_max = zone[0]
-            y_min, y_max = zone[1]
-            plt.gca().add_patch(plt.Rectangle((x_min, y_min), x_max - x_min, y_max - y_min, 
-                                             fill=True, color='red', alpha=0.3))
-    
-    plt.title(f'Average Trajectory - {policy_name}')
+    plt.title('Trajectory Visualization')
     plt.xlabel('X Position')
     plt.ylabel('Y Position')
-    plt.grid(True, alpha=0.3)
     plt.legend()
-    plt.axis('equal')
-    plt.savefig(f"{output_dir}/average_trajectory_{policy_name}.png")
+    plt.grid(True, alpha=0.3)
+    
+    # Save the plot
+    plt.savefig(f"{output_dir}/trajectory_patterns_{policy_name}.png")
     plt.close()
     
-    # Plot velocity components
-    plt.figure(figsize=(12, 8))
+    # Analyze action patterns along trajectories
+    action_patterns = []
+    for trajectory in trajectories:
+        pattern = []
+        for step in trajectory:
+            if 'agent_action' in step and 'human_action' in step:
+                pattern.append((step['agent_action'], step['human_action'], step['overwritten']))
+        action_patterns.append(pattern)
     
-    plt.subplot(2, 1, 1)
-    plt.plot(avg_trajectory['vx'], 'b-', label='VX')
-    plt.title(f'Average Velocity Components - {policy_name}')
-    plt.xlabel('Step')
-    plt.ylabel('Velocity X')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    # Count common action patterns
+    pattern_counts = Counter([tuple(pattern) for pattern in action_patterns])
     
-    plt.subplot(2, 1, 2)
-    plt.plot(avg_trajectory['vy'], 'r-', label='VY')
-    plt.xlabel('Step')
-    plt.ylabel('Velocity Y')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    # Create a summary of the most common patterns
+    common_patterns = pattern_counts.most_common(5)
     
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/average_velocity_{policy_name}.png")
-    plt.close()
+    # Create a summary DataFrame
+    summary_data = []
+    for pattern, count in common_patterns:
+        summary_data.append({
+            'Pattern': str(pattern),
+            'Count': count,
+            'Percentage': count / len(action_patterns) * 100
+        })
     
-    # Plot angle and angular velocity
-    plt.figure(figsize=(12, 8))
+    summary = pd.DataFrame(summary_data)
     
-    plt.subplot(2, 1, 1)
-    plt.plot(avg_trajectory['angle'], 'g-', label='Angle')
-    plt.title(f'Average Angle and Angular Velocity - {policy_name}')
-    plt.xlabel('Step')
-    plt.ylabel('Angle (radians)')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+    # Save the summary
+    summary.to_csv(f"{output_dir}/trajectory_pattern_summary_{policy_name}.csv", index=False)
     
-    plt.subplot(2, 1, 2)
-    plt.plot(avg_trajectory['angular_velocity'], 'm-', label='Angular Velocity')
-    plt.xlabel('Step')
-    plt.ylabel('Angular Velocity')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/average_angle_{policy_name}.png")
-    plt.close()
-    
-    return avg_trajectory
+    return {
+        'common_patterns': common_patterns,
+        'num_trajectories': len(trajectories)
+    }
 
 def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
-    """Analyze success rate and landing statistics"""
-    success_count = 0
-    crash_count = 0
-    timeout_count = 0
+    """Analyze success rate and related statistics"""
+    # Check if the data contains success information
+    if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
+        print("No trajectory data found for success rate analysis")
+        return {}
+    
+    # Initialize counters
+    successful_episodes = 0
     steps_to_success = []
     
-    for episode in data:
-        last_step = episode['trajectory'][-1]
-        if last_step['terminated'] and not last_step['truncated']:
-            if last_step['info'].get('success', False):
-                success_count += 1
-                steps_to_success.append(len(episode['trajectory']))
-            else:
-                crash_count += 1
-        else:
-            timeout_count += 1
+    # Check if the data contains danger zone information
+    first_step = data[0]['trajectory'][0]
+    has_danger_zones = 'distance_to_danger' in first_step
     
+    # Check each episode for success
+    for episode in data:
+        trajectory = episode['trajectory']
+        success = False
+        steps = 0
+        entered_danger_zone = False
+        
+        # Check if the episode entered a danger zone
+        if has_danger_zones:
+            for step in trajectory:
+                for direction, distance in step['distance_to_danger'].items():
+                    if distance is not None and distance <= 0:  # Entry into danger zone
+                        entered_danger_zone = True
+                        break
+                if entered_danger_zone:
+                    break
+        
+        # Check if the episode was successful
+        # For Lunar Lander, check if the lander landed successfully
+        if 'info' in trajectory[-1] and 'success' in trajectory[-1]['info']:
+            success = trajectory[-1]['info']['success']
+        # For Highway environment, check if the vehicle reached the end without crashing
+        elif 'info' in trajectory[-1] and 'crashed' in trajectory[-1]['info']:
+            success = not trajectory[-1]['info']['crashed']
+        
+        if success:
+            successful_episodes += 1
+            # Only count steps to success if the episode didn't enter a danger zone
+            if not entered_danger_zone:
+                steps_to_success.append(len(trajectory))
+    
+    # Calculate success rate
     total_episodes = len(data)
-    success_rate = success_count / total_episodes
-    crash_rate = crash_count / total_episodes
-    timeout_rate = timeout_count / total_episodes
+    success_rate = successful_episodes / total_episodes if total_episodes > 0 else 0
     
     # Calculate average steps to success
     avg_steps_to_success = np.mean(steps_to_success) if steps_to_success else 0
     
+    # Create a figure for success rate
+    plt.figure(figsize=(8, 6))
+    
     # Create a pie chart
-    plt.figure(figsize=(10, 8))
-    plt.pie([success_count, crash_count, timeout_count], 
-            labels=['Success', 'Crash', 'Timeout'],
-            autopct='%1.1f%%',
-            colors=['green', 'red', 'orange'])
-    plt.title(f'Episode Outcomes - {policy_name}')
-    plt.savefig(f"{output_dir}/outcome_distribution_{policy_name}.png")
+    labels = ['Successful', 'Unsuccessful']
+    sizes = [successful_episodes, total_episodes - successful_episodes]
+    colors = ['#4CAF50', '#F44336']
+    
+    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+    plt.axis('equal')
+    plt.title('Success Rate')
+    
+    # Save the plot
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(f"{output_dir}/success_rate_{policy_name}.png")
     plt.close()
+    
+    # Create a figure for steps to success distribution
+    if steps_to_success:
+        plt.figure(figsize=(10, 6))
+        
+        sns.histplot(steps_to_success, kde=True)
+        plt.axvline(avg_steps_to_success, color='r', linestyle='--', label=f'Mean: {avg_steps_to_success:.2f}')
+        
+        plt.title('Steps to Success Distribution')
+        plt.xlabel('Number of Steps')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Save the plot
+        plt.savefig(f"{output_dir}/steps_to_success_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
-        'Outcome': ['Success', 'Crash', 'Timeout'],
-        'Count': [success_count, crash_count, timeout_count],
-        'Rate': [success_rate, crash_rate, timeout_rate]
+        'Metric': ['Success Rate', 'Average Steps to Success', 'Total Episodes', 'Successful Episodes'],
+        'Value': [success_rate, avg_steps_to_success, total_episodes, successful_episodes]
     })
     
     # Save the summary
-    summary.to_csv(f"{output_dir}/outcome_summary_{policy_name}.csv", index=False)
+    summary.to_csv(f"{output_dir}/success_summary_{policy_name}.csv", index=False)
     
     return {
-        'success_count': success_count,
-        'crash_count': crash_count,
-        'timeout_count': timeout_count,
         'success_rate': success_rate,
-        'crash_rate': crash_rate,
-        'timeout_rate': timeout_rate,
-        'avg_steps_to_success': avg_steps_to_success
+        'avg_steps_to_success': avg_steps_to_success,
+        'total_episodes': total_episodes,
+        'successful_episodes': successful_episodes
     }
 
 def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
@@ -621,16 +679,32 @@ def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str,
     notification_count = sum(1 for n in notifications if n)
     notification_rate = notification_count / len(notifications) if notifications else 0
     
+    # Determine the action space size dynamically
+    max_human_action = max(human_actions) if human_actions else 0
+    max_agent_action = max(agent_actions) if agent_actions else 0
+    action_space_size = max(max_human_action, max_agent_action) + 1
+    
     # Create a confusion matrix for human vs agent actions
-    confusion_matrix = np.zeros((4, 4))
+    confusion_matrix = np.zeros((action_space_size, action_space_size))
     for h, a in zip(human_actions, agent_actions):
         confusion_matrix[h, a] += 1
     
     # Plot confusion matrix
     plt.figure(figsize=(10, 8))
+    
+    # Create action labels based on the environment type
+    # For Lunar Lander: [0: do nothing, 1: fire left, 2: fire main, 3: fire right]
+    # For Highway: [0: lane left, 1: idle, 2: lane right, 3: faster, 4: slower]
+    if action_space_size == 4:
+        action_labels = ['No-op', 'Left', 'Main', 'Right']
+    elif action_space_size == 5:
+        action_labels = ['Lane Left', 'Idle', 'Lane Right', 'Faster', 'Slower']
+    else:
+        action_labels = [str(i) for i in range(action_space_size)]
+    
     sns.heatmap(confusion_matrix, annot=True, fmt='g', cmap='Blues',
-                xticklabels=['No-op', 'Left', 'Main', 'Right'],
-                yticklabels=['No-op', 'Left', 'Main', 'Right'])
+                xticklabels=action_labels,
+                yticklabels=action_labels)
     plt.title(f'Human vs Agent Action Confusion Matrix - {policy_name}')
     plt.xlabel('Agent Action')
     plt.ylabel('Human Action')
@@ -660,6 +734,12 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
     notification_lengths_per_trajectory = []
     overwrite_rates_per_trajectory = []
     
+    # Track notification length frequencies per trajectory
+    notification_length_frequencies = []
+    
+    # Track notification length selection rates per trajectory
+    notification_length_selection_rates = []
+    
     # Analyze each trajectory
     for episode_idx, episode in enumerate(data):
         trajectory = episode['trajectory']
@@ -669,10 +749,14 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         notification_lengths = []
         overwritten_after_notification = []
         
+        # Track notification length frequencies for this trajectory
+        length_counts = defaultdict(int)
+        
         for i, step in enumerate(trajectory):
             if step['agent_action_type'] == 2:  # Notification
                 notification_steps.append(i)
                 notification_lengths.append(step['agent_action_length'])
+                length_counts[step['agent_action_length']] += 1
                 
                 # Check if the next step was overwritten
                 if i + 1 < len(trajectory):
@@ -689,10 +773,22 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         else:
             overwrite_rate = 0
         
+        # Calculate notification length selection rates for this trajectory
+        length_selection_rates = {}
+        if num_notifications > 0:
+            for length, count in length_counts.items():
+                length_selection_rates[length] = count / num_notifications
+        
         # Store statistics
         notifications_per_trajectory.append(num_notifications)
         notification_lengths_per_trajectory.append(avg_notification_length)
         overwrite_rates_per_trajectory.append(overwrite_rate)
+        
+        # Store notification length frequencies for this trajectory
+        notification_length_frequencies.append(dict(length_counts))
+        
+        # Store notification length selection rates for this trajectory
+        notification_length_selection_rates.append(length_selection_rates)
     
     # Calculate overall statistics
     avg_notifications_per_trajectory = np.mean(notifications_per_trajectory)
@@ -701,6 +797,28 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
     std_notification_length_per_trajectory = np.std(notification_lengths_per_trajectory)
     avg_overwrite_rate_per_trajectory = np.mean(overwrite_rates_per_trajectory)
     std_overwrite_rate_per_trajectory = np.std(overwrite_rates_per_trajectory)
+    
+    # Calculate average frequency of each notification length across all trajectories
+    all_lengths = set()
+    for freq_dict in notification_length_frequencies:
+        all_lengths.update(freq_dict.keys())
+    
+    avg_length_frequencies = {}
+    for length in sorted(all_lengths):
+        # Calculate the average frequency of this length across all trajectories
+        frequencies = [freq_dict.get(length, 0) for freq_dict in notification_length_frequencies]
+        avg_length_frequencies[length] = np.mean(frequencies)
+    
+    # Calculate average selection rate of each notification length across all trajectories
+    avg_length_selection_rates = {}
+    for length in sorted(all_lengths):
+        # Calculate the average selection rate of this length across all trajectories
+        selection_rates = [rate_dict.get(length, 0) for rate_dict in notification_length_selection_rates]
+        avg_length_selection_rates[length] = np.mean(selection_rates)
+    
+    # Assert that the selection rates sum to 1 (with a small tolerance for floating-point errors)
+    total_rate = sum(avg_length_selection_rates.values())
+    assert abs(total_rate - 1.0) < 1e-10, f"Notification length selection rates should sum to 1, but sum to {total_rate}"
     
     # Create a figure for notifications per trajectory distribution
     plt.figure(figsize=(10, 6))
@@ -738,6 +856,30 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
     plt.savefig(f"{output_dir}/overwrite_rate_per_trajectory_{policy_name}.png")
     plt.close()
     
+    # Create a figure for notification length frequency distribution
+    plt.figure(figsize=(10, 6))
+    lengths = list(avg_length_frequencies.keys())
+    frequencies = list(avg_length_frequencies.values())
+    plt.bar(lengths, frequencies, alpha=0.7)
+    plt.title(f'Average Notification Length Frequency - {policy_name}')
+    plt.xlabel('Notification Length')
+    plt.ylabel('Average Frequency Per Trajectory')
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{output_dir}/notification_length_frequency_{policy_name}.png")
+    plt.close()
+    
+    # Create a figure for notification length selection rate distribution
+    plt.figure(figsize=(10, 6))
+    lengths = list(avg_length_selection_rates.keys())
+    selection_rates = list(avg_length_selection_rates.values())
+    plt.bar(lengths, selection_rates, alpha=0.7)
+    plt.title(f'Average Notification Length Selection Rate - {policy_name}')
+    plt.xlabel('Notification Length')
+    plt.ylabel('Selection Rate')
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{output_dir}/notification_length_selection_rate_{policy_name}.png")
+    plt.close()
+    
     # Create a summary DataFrame
     summary = pd.DataFrame({
         'Metric': [
@@ -758,6 +900,14 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         ]
     })
     
+    # Add notification length frequency data to the summary
+    for length, freq in avg_length_frequencies.items():
+        summary.loc[len(summary)] = [f'Average Frequency of Length {length}', freq]
+    
+    # Add notification length selection rate data to the summary
+    for length, rate in avg_length_selection_rates.items():
+        summary.loc[len(summary)] = [f'Selection Rate of Length {length}', rate]
+    
     # Save the summary
     summary.to_csv(f"{output_dir}/per_trajectory_notification_summary_{policy_name}.csv", index=False)
     
@@ -767,7 +917,9 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         'avg_notification_length_per_trajectory': avg_notification_length_per_trajectory,
         'std_notification_length_per_trajectory': std_notification_length_per_trajectory,
         'avg_overwrite_rate_per_trajectory': avg_overwrite_rate_per_trajectory,
-        'std_overwrite_rate_per_trajectory': std_overwrite_rate_per_trajectory
+        'std_overwrite_rate_per_trajectory': std_overwrite_rate_per_trajectory,
+        'notification_length_frequencies': avg_length_frequencies,
+        'notification_length_selection_rates': avg_length_selection_rates
     }
 
 def analyze_final_notification_distance(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
@@ -939,67 +1091,357 @@ def analyze_notification_rate_per_trajectory(data: List[Dict[str, Any]], output_
     }
 
 def create_comparative_visualizations(policy_results, output_dir):
-    """Create comparative visualizations for all policies."""
-    # Create a figure for final notification distance comparison
-    plt.figure(figsize=(10, 6))
+    """Create comparative visualizations across different policies."""
+    # Set style
+    plt.style.use('seaborn-v0_8-whitegrid')
     
-    # Plot mean final notification distance for bottom danger zone
-    for policy_name, result in policy_results.items():
-        plt.bar(policy_name, result['final_notification_distance_stats']['stats']['bottom']['mean'],
-               yerr=result['final_notification_distance_stats']['stats']['bottom']['std'], capsize=10)
-    plt.title('Mean Final Notification Distance to Bottom Danger Zone')
-    plt.ylabel('Mean Distance')
-    plt.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
+    # Define metrics by environment type
+    lunar_lander_metrics = [
+        ('Final Notification Distance', 'final_notification_distance_stats'),
+        ('Notification Rate Before Entry', 'final_notification_distance_stats'),
+        ('Danger Zone Entry Rate', 'danger_zone_stats'),
+        ('Average Steps to Danger Zone Entry', 'danger_zone_stats'),
+    ]
     
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'final_notification_distance_comparison.png'))
-    plt.close()
+    highway_metrics = [
+        ('Success Rate', 'success_stats'),
+        ('Average Steps to Success', 'success_stats'),
+    ]
     
-    # Create a figure for notification rate before entry comparison
-    plt.figure(figsize=(10, 6))
-    for policy_name, result in policy_results.items():
-        plt.bar(policy_name, result['final_notification_distance_stats']['notification_rate'])
-    plt.title('Notification Rate Before Bottom Danger Zone Entry')
-    plt.ylabel('Notification Rate')
-    plt.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'notification_rate_before_entry_comparison.png'))
-    plt.close()
+    common_metrics = [
+        ('Notification Rate Per Trajectory', 'notification_rate_per_trajectory_stats'),
+        ('Notification Rate Distribution', 'notification_rate_per_trajectory_stats'),
+        ('Notification Length Frequency', 'per_trajectory_notification_stats'),
+        ('Notification Length Selection Rate', 'per_trajectory_notification_stats'),
+        ('Human-Agent Agreement Rate', 'interaction_stats'),
+        ('Human Overwrite Rate', 'interaction_stats')
+    ]
     
-    # Create a figure for notification rate per trajectory comparison
-    plt.figure(figsize=(10, 6))
-    for policy_name, result in policy_results.items():
-        plt.bar(policy_name, result['notification_rate_per_trajectory_stats']['avg_notification_rate'],
-               yerr=result['notification_rate_per_trajectory_stats']['std_notification_rate'], capsize=10)
-    plt.title('Average Notification Rate Per Trajectory')
-    plt.ylabel('Average Notification Rate')
-    plt.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'notification_rate_per_trajectory_comparison.png'))
-    plt.close()
+    # Determine which metrics to use based on the environment type
+    all_metrics = []
     
-    # Create a figure for notification rate distribution comparison
-    plt.figure(figsize=(12, 8))
-    for policy_name, result in policy_results.items():
-        plt.hist(result['notification_rate_per_trajectory_stats']['notification_rates_per_trajectory'], 
-                bins=10, alpha=0.5, label=policy_name)
-    plt.title('Notification Rate Distribution Per Trajectory')
-    plt.xlabel('Notification Rate')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'notification_rate_distribution_comparison.png'))
-    plt.close()
+    # Check if any policy has lunar lander metrics
+    has_lunar_lander = False
+    for result in policy_results.values():
+        if 'final_notification_distance_stats' in result and 'stats' in result['final_notification_distance_stats']:
+            has_lunar_lander = True
+            break
+    
+    # Check if any policy has highway metrics
+    has_highway = False
+    for result in policy_results.values():
+        if 'success_stats' in result and 'success_rate' in result['success_stats']:
+            has_highway = True
+            break
+    
+    # Add appropriate metrics based on environment type
+    if has_lunar_lander:
+        all_metrics.extend(lunar_lander_metrics)
+    if has_highway:
+        all_metrics.extend(highway_metrics)
+    all_metrics.extend(common_metrics)
+    
+    # Create a figure for each metric
+    for metric_name, metric_data in all_metrics:
+        # Check if any policy has this metric
+        has_metric = False
+        for policy_name, result in policy_results.items():
+            if metric_data in result:
+                if metric_name == 'Final Notification Distance' and 'stats' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Notification Rate Before Entry' and 'notification_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Notification Rate Per Trajectory' and 'avg_notification_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Notification Rate Distribution' and 'notification_rates' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Notification Length Frequency' and 'notification_length_frequencies' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Notification Length Selection Rate' and 'notification_length_selection_rates' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Success Rate' and 'success_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Average Steps to Success' and 'avg_steps_to_success' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Danger Zone Entry Rate' and 'entry_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Average Steps to Danger Zone Entry' and 'avg_steps_to_entry' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Human-Agent Agreement Rate' and 'agreement_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+                elif metric_name == 'Human Overwrite Rate' and 'overwrite_rate' in result[metric_data]:
+                    has_metric = True
+                    break
+        
+        if not has_metric:
+            continue
+        
+        # Create figure
+        plt.figure(figsize=(10, 6))
+        
+        # Plot data for each policy
+        if metric_name == 'Final Notification Distance':
+            # Bar plot of mean final notification distance
+            means = []
+            stds = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'stats' in result[metric_data]:
+                    means.append(result[metric_data]['stats']['bottom']['mean'])
+                    stds.append(result[metric_data]['stats']['bottom']['std'])
+                    policies.append(policy_name)
+            
+            if means:
+                plt.bar(policies, means, yerr=stds, capsize=5)
+                plt.ylabel('Mean Final Notification Distance')
+                plt.title('Mean Final Notification Distance by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Notification Rate Before Entry':
+            # Bar plot of notification rate before entry
+            rates = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'notification_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['notification_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates)
+                plt.ylabel('Notification Rate Before Entry')
+                plt.title('Notification Rate Before Entry by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Notification Rate Per Trajectory':
+            # Bar plot of average notification rate per trajectory
+            rates = []
+            stds = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'avg_notification_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['avg_notification_rate'])
+                    stds.append(result[metric_data]['std_notification_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates, yerr=stds, capsize=5)
+                plt.ylabel('Average Notification Rate Per Trajectory')
+                plt.title('Average Notification Rate Per Trajectory by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Notification Rate Distribution':
+            # Box plot of notification rate distribution
+            data = []
+            labels = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'notification_rates' in result[metric_data]:
+                    data.append(result[metric_data]['notification_rates'])
+                    labels.append(policy_name)
+            
+            if data:
+                plt.boxplot(data, labels=labels)
+                plt.ylabel('Notification Rate')
+                plt.title('Notification Rate Distribution by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace("", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Notification Length Frequency':
+            # Bar plot of notification length frequencies
+            lengths = set()
+            for result in policy_results.values():
+                if metric_data in result and 'notification_length_frequencies' in result[metric_data]:
+                    lengths.update(result[metric_data]['notification_length_frequencies'].keys())
+            
+            if lengths:
+                x = np.arange(len(lengths))
+                width = 0.8 / len(policy_results)
+                
+                for i, (policy_name, result) in enumerate(policy_results.items()):
+                    if metric_data in result and 'notification_length_frequencies' in result[metric_data]:
+                        frequencies = [result[metric_data]['notification_length_frequencies'].get(length, 0) for length in lengths]
+                        plt.bar(x + i * width, frequencies, width, label=policy_name)
+                
+                plt.xlabel('Notification Length')
+                plt.ylabel('Frequency')
+                plt.title('Notification Length Frequency by Policy')
+                plt.xticks(x + width * (len(policy_results) - 1) / 2, lengths)
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Notification Length Selection Rate':
+            # Bar plot of notification length selection rates
+            lengths = set()
+            for result in policy_results.values():
+                if metric_data in result and 'notification_length_selection_rates' in result[metric_data]:
+                    lengths.update(result[metric_data]['notification_length_selection_rates'].keys())
+            
+            if lengths:
+                x = np.arange(len(lengths))
+                width = 0.8 / len(policy_results)
+                
+                for i, (policy_name, result) in enumerate(policy_results.items()):
+                    if metric_data in result and 'notification_length_selection_rates' in result[metric_data]:
+                        rates = [result[metric_data]['notification_length_selection_rates'].get(length, 0) for length in lengths]
+                        plt.bar(x + i * width, rates, width, label=policy_name)
+                
+                plt.xlabel('Notification Length')
+                plt.ylabel('Selection Rate')
+                plt.title('Notification Length Selection Rate by Policy')
+                plt.xticks(x + width * (len(policy_results) - 1) / 2, lengths)
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Success Rate':
+            # Bar plot of success rate
+            rates = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'success_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['success_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates)
+                plt.ylabel('Success Rate')
+                plt.title('Success Rate by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Average Steps to Success':
+            # Bar plot of average steps to success
+            steps = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'avg_steps_to_success' in result[metric_data]:
+                    steps.append(result[metric_data]['avg_steps_to_success'])
+                    policies.append(policy_name)
+            
+            if steps:
+                plt.bar(policies, steps)
+                plt.ylabel('Average Steps to Success')
+                plt.title('Average Steps to Success by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Danger Zone Entry Rate':
+            # Bar plot of danger zone entry rate
+            rates = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'entry_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['entry_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates)
+                plt.ylabel('Danger Zone Entry Rate')
+                plt.title('Danger Zone Entry Rate by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Average Steps to Danger Zone Entry':
+            # Bar plot of average steps to danger zone entry
+            steps = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'avg_steps_to_entry' in result[metric_data]:
+                    steps.append(result[metric_data]['avg_steps_to_entry'])
+                    policies.append(policy_name)
+            
+            if steps:
+                plt.bar(policies, steps)
+                plt.ylabel('Average Steps to Danger Zone Entry')
+                plt.title('Average Steps to Danger Zone Entry by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Human-Agent Agreement Rate':
+            # Bar plot of human-agent agreement rate
+            rates = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'agreement_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['agreement_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates)
+                plt.ylabel('Human-Agent Agreement Rate')
+                plt.title('Human-Agent Agreement Rate by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
+        
+        elif metric_name == 'Human Overwrite Rate':
+            # Bar plot of human overwrite rate
+            rates = []
+            policies = []
+            
+            for policy_name, result in policy_results.items():
+                if metric_data in result and 'overwrite_rate' in result[metric_data]:
+                    rates.append(result[metric_data]['overwrite_rate'])
+                    policies.append(policy_name)
+            
+            if rates:
+                plt.bar(policies, rates)
+                plt.ylabel('Human Overwrite Rate')
+                plt.title('Human Overwrite Rate by Policy')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'{metric_name.lower().replace(" ", "_")}_comparison.png'))
+                plt.close()
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze trajectory data from collected episodes')
     parser.add_argument('--data_dirs', type=str, nargs='+', required=True, help='Directories containing trajectory data')
     parser.add_argument('--policy_names', type=str, nargs='+', required=True, help='Names for each policy')
     parser.add_argument('--output_dir', type=str, required=True, help='Directory to save analysis results')
+    parser.add_argument('--env_type', type=str, choices=['DangerZoneLunarLander', 'multi-merge-v0', 'auto'], default='auto', 
+                        help='Environment type for analysis. Use "auto" to automatically detect from data.')
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
@@ -1020,48 +1462,102 @@ def main():
         data_file = os.path.join(data_dir, 'all_episodes.json')
         with open(data_file, 'r') as f:
             data = json.load(f)
+        
+        # Determine environment type if auto
+        env_type = args.env_type
+        if env_type == 'auto' and data and 'trajectory' in data[0] and data[0]['trajectory']:
+            first_step = data[0]['trajectory'][0]
+            if 'distance_to_danger' in first_step:
+                env_type = 'DangerZoneLunarLander'
+            elif 'info' in first_step and 'vehicle_info' in first_step['info']:
+                env_type = 'multi-merge-v0'
+        
+        print(f"Analyzing data for {policy_name} (Environment: {env_type})")
 
-        # Run analyses
-        success_stats = analyze_success_rate(data, policy_output_dir, policy_name)
-        danger_zone_stats = analyze_danger_zone_interactions(data, policy_output_dir, policy_name)
+        # Run common analyses
+        reward_stats = analyze_rewards(data, policy_output_dir, policy_name)
+        length_stats = analyze_episode_lengths(data, policy_output_dir, policy_name)
+        action_stats = analyze_action_distribution(data, policy_output_dir, policy_name)
         notification_stats = analyze_notifications(data, policy_output_dir, policy_name)
         interaction_stats = analyze_human_agent_interaction(data, policy_output_dir, policy_name)
         per_trajectory_notification_stats = analyze_per_trajectory_notifications(data, policy_output_dir, policy_name)
-        final_notification_distance_stats = analyze_final_notification_distance(data, policy_output_dir, policy_name)
         notification_rate_per_trajectory_stats = analyze_notification_rate_per_trajectory(data, policy_output_dir, policy_name)
+        
+        # Run environment-specific analyses
+        success_stats = analyze_success_rate(data, policy_output_dir, policy_name)
+        
+        # Initialize empty dictionaries for environment-specific stats
+        danger_zone_stats = {}
+        final_notification_distance_stats = {}
+        
+        # Only run danger zone analysis if the environment has danger zones
+        if env_type == 'DangerZoneLunarLander':
+            danger_zone_stats = analyze_danger_zone_interactions(data, policy_output_dir, policy_name)
+            final_notification_distance_stats = analyze_final_notification_distance(data, policy_output_dir, policy_name)
+        
+        # Run trajectory pattern analysis
+        trajectory_pattern_stats = analyze_trajectory_patterns(data, policy_output_dir, policy_name)
 
         # Store results
         policy_results[policy_name] = {
-            'success_stats': success_stats,
-            'danger_zone_stats': danger_zone_stats,
+            'env_type': env_type,
+            'reward_stats': reward_stats,
+            'length_stats': length_stats,
+            'action_stats': action_stats,
             'notification_stats': notification_stats,
             'interaction_stats': interaction_stats,
             'per_trajectory_notification_stats': per_trajectory_notification_stats,
-            'final_notification_distance_stats': final_notification_distance_stats,
+            'success_stats': success_stats,
+            'danger_zone_stats': danger_zone_stats,
             'notification_rate_per_trajectory_stats': notification_rate_per_trajectory_stats
         }
+        
+        # Only include final_notification_distance_stats for DangerZoneLunarLander
+        if env_type == 'DangerZoneLunarLander':
+            policy_results[policy_name]['final_notification_distance_stats'] = final_notification_distance_stats
 
     # Create comparative analysis
     comparative_data = []
     for policy_name, result in policy_results.items():
-        comparative_data.append({
+        # Get notification length frequencies and selection rates
+        length_frequencies = result['per_trajectory_notification_stats'].get('notification_length_frequencies', {})
+        length_selection_rates = result['per_trajectory_notification_stats'].get('notification_length_selection_rates', {})
+        
+        # Create base dictionary with common metrics
+        policy_data = {
             'Policy': policy_name,
-            'Success Rate': result['success_stats']['success_rate'],
-            'Avg Steps to Success': result['success_stats']['avg_steps_to_success'],
-            'Danger Zone Entry Rate': result['danger_zone_stats']['entry_rate'],
-            'Avg Steps to Danger Zone': result['danger_zone_stats']['avg_steps_to_entry'],
-            'Total Notifications': result['notification_stats']['total_notifications'],
-            'Avg Notification Length': result['notification_stats']['avg_notification_length'],
-            'Human Overwrite Rate': result['interaction_stats']['overwrite_rate'],
-            'Avg Notifications Per Trajectory': result['per_trajectory_notification_stats']['avg_notifications_per_trajectory'],
-            'Avg Notification Length Per Trajectory': result['per_trajectory_notification_stats']['avg_notification_length_per_trajectory'],
-            'Avg Overwrite Rate Per Trajectory': result['per_trajectory_notification_stats']['avg_overwrite_rate_per_trajectory'],
-            'Final Notification Distance Mean': result['final_notification_distance_stats']['stats']['bottom']['mean'],
-            'Final Notification Distance Std Dev': result['final_notification_distance_stats']['stats']['bottom']['std'],
-            'Notification Rate Before Entry': result['final_notification_distance_stats']['notification_rate'],
-            'Avg Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats']['avg_notification_rate'],
-            'Std Dev Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats']['std_notification_rate']
-        })
+            'Environment': result['env_type'],
+            'Success Rate': result['success_stats'].get('success_rate', 0),
+            'Avg Steps to Success': result['success_stats'].get('avg_steps_to_success', 0),
+            'Total Notifications': result['notification_stats'].get('total_notifications', 0),
+            'Avg Notification Length': result['notification_stats'].get('avg_notification_length', 0),
+            'Human Overwrite Rate': result['interaction_stats'].get('overwrite_rate', 0),
+            'Avg Notifications Per Trajectory': result['per_trajectory_notification_stats'].get('avg_notifications_per_trajectory', 0),
+            'Avg Notification Length Per Trajectory': result['per_trajectory_notification_stats'].get('avg_notification_length_per_trajectory', 0),
+            'Avg Overwrite Rate Per Trajectory': result['per_trajectory_notification_stats'].get('avg_overwrite_rate_per_trajectory', 0),
+            'Avg Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats'].get('avg_notification_rate', 0),
+            'Std Dev Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats'].get('std_notification_rate', 0)
+        }
+        
+        # Add danger zone metrics if available
+        if result['env_type'] == 'DangerZoneLunarLander' and 'final_notification_distance_stats' in result:
+            policy_data.update({
+                'Danger Zone Entry Rate': result['danger_zone_stats'].get('entry_rate', 0),
+                'Avg Steps to Danger Zone': result['danger_zone_stats'].get('avg_steps_to_entry', 0),
+                'Final Notification Distance Mean': result['final_notification_distance_stats'].get('stats', {}).get('bottom', {}).get('mean', 0),
+                'Final Notification Distance Std Dev': result['final_notification_distance_stats'].get('stats', {}).get('bottom', {}).get('std', 0),
+                'Notification Rate Before Entry': result['final_notification_distance_stats'].get('notification_rate', 0)
+            })
+        
+        # Add notification length frequencies
+        for length, freq in length_frequencies.items():
+            policy_data[f'Avg Frequency of Length {length}'] = freq
+        
+        # Add notification length selection rates
+        for length, rate in length_selection_rates.items():
+            policy_data[f'Selection Rate of Length {length}'] = rate
+        
+        comparative_data.append(policy_data)
 
     # Create comparative DataFrame
     comparative_df = pd.DataFrame(comparative_data)

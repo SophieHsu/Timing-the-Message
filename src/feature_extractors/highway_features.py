@@ -269,7 +269,7 @@ class HighwayNotifierFeaturesExtractor(BaseFeaturesExtractor):
         # observations: batch, entities, features
         observations = observations.reshape(-1, self.args.human_utterance_memory_length, self.observation_space+3)
         only_obs = observations[:,:,:-3]
-        only_obs = only_obs.reshape(-1, 10, 7)
+        only_obs = only_obs.reshape(-1, self.args.num_vehicles, 7)
         features = self.extractor(only_obs)
         features = features.reshape(-1, self.args.human_utterance_memory_length, self.args.highway_features_dim)
         features = torch.cat([features, observations[:, :, -3:]], dim=-1).reshape(-1, self.args.human_utterance_memory_length*(self.args.highway_features_dim+3))

@@ -79,11 +79,11 @@ def main():
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
-        output_dir = Path(f"data/{args.model_run_id}_convey{run.config['human_comprehend_bool']}_delay{run.config['human_reaction_delay']}_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
+        output_dir = Path(f"data/{args.env_id}/{args.model_run_id}_convey{run.config['human_comprehend_bool']}_delay{run.config['human_reaction_delay']}_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
 
     # Create output directory for data
     if args.agent_type == 'heuristic':
-        output_dir = Path(f"data/heuristic_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
+        output_dir = Path(f"data/{args.env_id}/heuristic_gtconvey{args.human_comprehend_bool}_gtdelay{args.human_reaction_delay}_{int(time.time())}")
         
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -151,23 +151,40 @@ def main():
                         'overwritten': overwrite_flags[env_idx],
                         'reward': rewards[env_idx],
                         'observation': obs[env_idx].tolist(),
-                        'distance_to_danger': {
-                            'left': obs[env_idx][8], 
-                            'right': obs[env_idx][9], 
-                            'top': obs[env_idx][10], 
-                            'bottom': obs[env_idx][11]
-                        },
                         'next_observation': next_obs[env_idx].tolist(),
-                        'next_distance_to_danger': {
-                            'left': next_obs[env_idx][8], 
-                            'right': next_obs[env_idx][9], 
-                            'top': next_obs[env_idx][10], 
-                            'bottom': next_obs[env_idx][11]
-                        },
                         'terminated': bool(terminations[env_idx]),
                         'truncated': bool(truncations[env_idx]),
                         'info': {k: v[env_idx].tolist() if isinstance(v, np.ndarray) else v for k, v in infos.items()},
                     }
+                    
+                    # Add environment-specific data
+                    if args.env_id == "DangerZoneLunarLander":
+                        # Add danger zone distances for Lunar Lander
+                        trajectory_step['distance_to_danger'] = {
+                            'left': None if len(obs[env_idx]) < 9 else obs[env_idx][8], 
+                            'right': None if len(obs[env_idx]) < 10 else obs[env_idx][9], 
+                            'top': None if len(obs[env_idx]) < 11 else obs[env_idx][10], 
+                            'bottom': None if len(obs[env_idx]) < 12 else obs[env_idx][11]
+                        }
+                        trajectory_step['next_distance_to_danger'] = {
+                            'left': None if len(next_obs[env_idx]) < 9 else next_obs[env_idx][8], 
+                            'right': None if len(next_obs[env_idx]) < 10 else next_obs[env_idx][9], 
+                            'top': None if len(next_obs[env_idx]) < 11 else next_obs[env_idx][10], 
+                            'bottom': None if len(next_obs[env_idx]) < 12 else next_obs[env_idx][11]
+                        }
+                    elif args.env_id == "multi-merge-v0":
+                        # Add vehicle information for highway environment
+                        if 'vehicle_info' in infos:
+                            trajectory_step['vehicle_info'] = infos['vehicle_info'][env_idx]
+                        
+                        # Add road information if available
+                        if hasattr(envs.envs[env_idx].unwrapped, 'road'):
+                            road = envs.envs[env_idx].unwrapped.road
+                            trajectory_step['road_info'] = {
+                                'network': str(road.network),
+                                'vehicles': [str(v) for v in road.vehicles],
+                                'vehicle_count': len(road.vehicles)
+                            }
                     
                     # Add to episode data
                     episode_data[env_idx].append(trajectory_step)
@@ -184,10 +201,24 @@ def main():
                             'num_steps': int(steps[env_idx]),
                             'trajectory': episode_data[env_idx]
                         }
-                        try:
-                            episode_summary['danger_zones'] = envs.envs[env_idx].unwrapped.danger_zones
-                        except:
-                            pass
+                        
+                        # Add environment-specific summary data
+                        if args.env_id == "DangerZoneLunarLander":
+                            try:
+                                episode_summary['danger_zones'] = envs.envs[env_idx].unwrapped.danger_zones
+                            except:
+                                pass
+                        elif args.env_id == "multi-merge-v0":
+                            try:
+                                # Add road information to summary
+                                road = envs.envs[env_idx].unwrapped.road
+                                episode_summary['road_summary'] = {
+                                    'network': str(road.network),
+                                    'vehicle_count': len(road.vehicles),
+                                    'crashed': envs.envs[env_idx].unwrapped.vehicle.crashed
+                                }
+                            except:
+                                pass
                         
                         # Add to all episodes data
                         all_episodes_data.append(episode_summary)

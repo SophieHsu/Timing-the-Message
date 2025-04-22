@@ -164,8 +164,8 @@ class BaseEvaluator:
 
         self.args.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((self.args.max_episode_steps, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
 
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
@@ -175,7 +175,17 @@ class BaseEvaluator:
 
         obs, infos = envs.reset()
         episodic_returns = []
+        # New metrics
+        episodic_type2_counts = []
+        episodic_overwritten_counts = []
+        episodic_action_length_varieties = {}
+        
         total_reward = 0
+        # Initialize episode-specific metrics
+        type2_count = 0
+        overwritten_count = 0
+        action_length_counts = {}  # Dictionary to track frequency of each action length
+        
         step = 0
         episode_idx = 0
         
@@ -183,6 +193,10 @@ class BaseEvaluator:
             # Initialize trajectory data for this episode
             if step == 0:
                 trajectory_data = []
+                # Reset episode-specific metrics
+                type2_count = 0
+                overwritten_count = 0
+                action_length_counts = {}  # Reset action length counts for new episode
             
             # Get agent action
             if human_agent is not None:
@@ -211,12 +225,27 @@ class BaseEvaluator:
             next_done = np.logical_or(terminations, truncations)
             total_reward += reward
 
+            # Track additional metrics
+            agent_action_type = info["utterance"][0]
+            agent_action_length = info["utterance"][2]
+            
+            if agent_action_type == 2:
+                type2_count += 1
+                
+            if overwrite_flag:
+                overwritten_count += 1
+                
+            # Track action length frequencies
+            if agent_action_length not in action_length_counts:
+                action_length_counts[agent_action_length] = 0
+            action_length_counts[agent_action_length] += 1
+
             # Log trajectory data
             trajectory_step = {
                 'step': step,
-                'agent_action_type': info["utterance"][0],
+                'agent_action_type': agent_action_type,
                 'agent_action': info["utterance"][1],
-                'agent_action_length': info["utterance"][2],
+                'agent_action_length': agent_action_length,
                 'human_action': human_action,
                 'overwritten': overwrite_flag,
                 'reward': reward
@@ -229,6 +258,13 @@ class BaseEvaluator:
 
             if next_done:
                 episodic_returns += [total_reward]
+                # Add the new metrics for this episode
+                episodic_type2_counts += [type2_count]
+                episodic_overwritten_counts += [overwritten_count]
+                for key, value in action_length_counts.items():
+                    if key not in episodic_action_length_varieties:
+                        episodic_action_length_varieties[key] = []
+                    episodic_action_length_varieties[key] += [value]
                 
                 # Visualize trajectory if enabled
                 if self.visualize:
@@ -246,7 +282,7 @@ class BaseEvaluator:
                 
             obs = next_obs
 
-        return episodic_returns
+        return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties
 
 
 class LSTMEvaluator(BaseEvaluator):
@@ -282,9 +318,19 @@ class LSTMEvaluator(BaseEvaluator):
         init_flag = True
 
         episodic_returns = []
+        # New metrics
+        episodic_type2_counts = []
+        episodic_overwritten_counts = []
+        episodic_action_length_varieties = {}
+        
         n_steps = []
         step = 0
         episode_idx = 0
+        
+        # Initialize episode-specific metrics
+        type2_count = 0
+        overwritten_count = 0
+        action_length_counts = {}  # Dictionary to track frequency of each action length
         
         while len(episodic_returns) < eval_episodes:
             # Initialize trajectory data for this episode
@@ -293,6 +339,13 @@ class LSTMEvaluator(BaseEvaluator):
                     # log before moving on to next episode
                     # print(f"eval_episode={len(episodic_returns)}, episodic_return={total_reward[0]}")
                     episodic_returns += [total_reward[0]]
+                    # Add the new metrics for this episode
+                    episodic_type2_counts += [type2_count]
+                    episodic_overwritten_counts += [overwritten_count]
+                    for key, value in action_length_counts.items():
+                        if key not in episodic_action_length_varieties:
+                            episodic_action_length_varieties[key] = []
+                        episodic_action_length_varieties[key] += [value]
                     n_steps.append(n)
                     
                     # Visualize trajectory if enabled
@@ -316,6 +369,10 @@ class LSTMEvaluator(BaseEvaluator):
                 
                 # Initialize trajectory data for new episode
                 trajectory_data = []
+                # Reset episode-specific metrics
+                type2_count = 0
+                overwritten_count = 0
+                action_length_counts = {}  # Reset action length counts for new episode
 
             if human_agent is not None:
                 next_agent_obs = self.compute_next_agent_obs(next_obs, infos)
@@ -344,12 +401,27 @@ class LSTMEvaluator(BaseEvaluator):
             next_done = np.logical_or(terminations, truncations)
             total_reward += reward
             
+            # Track additional metrics
+            agent_action_type = info["utterance"][0]
+            agent_action_length = info["utterance"][2]
+            
+            if agent_action_type == 2:
+                type2_count += 1
+                
+            if overwrite_flag:
+                overwritten_count += 1
+                
+            # Track action length frequencies
+            if agent_action_length not in action_length_counts:
+                action_length_counts[agent_action_length] = 0
+            action_length_counts[agent_action_length] += 1
+            
             # Update trajectory data with reward
             trajectory_step = {
                 'step': step,
-                'agent_action_type': info["utterance"][0],
+                'agent_action_type': agent_action_type,
                 'agent_action': info["utterance"][1],
-                'agent_action_length': info["utterance"][2],
+                'agent_action_length': agent_action_length,
                 'human_action': human_action,
                 'reward': reward
             }
@@ -358,7 +430,7 @@ class LSTMEvaluator(BaseEvaluator):
             next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor(np.array([next_done])).to(device)
             step += 1
 
-        return episodic_returns #, info_list, n_steps
+        return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties #, info_list, n_steps
 
 
 class TransformerEvaluator(BaseEvaluator):
@@ -399,8 +471,18 @@ class TransformerEvaluator(BaseEvaluator):
         env_step = torch.zeros(num_envs).to(device)
 
         episodic_returns = []
+        # New metrics
+        episodic_type2_counts = []
+        episodic_overwritten_counts = []
+        episodic_action_length_varieties = {}
+        
         step = 0
         episode_idx = 0
+        
+        # Initialize episode-specific metrics
+        type2_count = 0
+        overwritten_count = 0
+        action_length_counts = {}  # Dictionary to track frequency of each action length
         
         # Initialize trajectory data for this episode
         trajectory_data = []
@@ -463,12 +545,36 @@ class TransformerEvaluator(BaseEvaluator):
             next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
             env_step = torch.where(next_done==1.0, torch.zeros_like(env_step), env_step + 1)
             
+            # Track additional metrics
+            agent_action_type = infos["utterance"][0]
+            agent_action_length = infos["utterance"][2]
+            
+            if agent_action_type == 2:
+                type2_count += 1
+                
+            if overwrite_flag:
+                overwritten_count += 1
+                
+            # Track action length frequencies
+            if agent_action_length not in action_length_counts:
+                action_length_counts[agent_action_length] = 0
+            action_length_counts[agent_action_length] += 1
+            
             # Update trajectory data with reward
             trajectory_step['reward'] = reward
+            trajectory_step['agent_action_type'] = agent_action_type
+            trajectory_step['agent_action_length'] = agent_action_length
             trajectory_data.append(trajectory_step)
                     
             if next_done:
                 episodic_returns += [rewards[step].sum().item()]
+                # Add the new metrics for this episode
+                episodic_type2_counts += [type2_count]
+                episodic_overwritten_counts += [overwritten_count]
+                for key, value in action_length_counts.items():
+                    if key not in episodic_action_length_varieties:
+                        episodic_action_length_varieties[key] = []
+                    episodic_action_length_varieties[key] += [value]
                 
                 # Visualize trajectory if enabled
                 if self.visualize and len(trajectory_data) > 0:
@@ -491,16 +597,19 @@ class TransformerEvaluator(BaseEvaluator):
                 
                 # Initialize trajectory data for new episode
                 trajectory_data = []
+                # Reset episode-specific metrics
+                type2_count = 0
+                overwritten_count = 0
+                action_length_counts = {}  # Reset action length counts for new episode
             else:
                 step += 1
 
-        return episodic_returns
+        return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties
 
 
 class BaseBlockingEvaluator(BaseEvaluator):
     def __init__(self, args, run_name):
         super().__init__(args, run_name)
-
 
     def evaluate(self,
         model_path: str,
@@ -528,7 +637,17 @@ class BaseBlockingEvaluator(BaseEvaluator):
 
         obs, infos = envs.reset()
         episodic_returns = []
+        # New metrics
+        episodic_type2_counts = []
+        episodic_overwritten_counts = []
+        episodic_action_length_varieties = {}
+        
         total_reward = 0
+        # Initialize episode-specific metrics
+        type2_count = 0
+        overwritten_count = 0
+        action_length_counts = {}  # Dictionary to track frequency of each action length
+        
         step = 0
         episode_idx = 0
         total_steps = 0
@@ -537,6 +656,10 @@ class BaseBlockingEvaluator(BaseEvaluator):
             # Initialize trajectory data for this episode
             if step == 0:
                 trajectory_data = []
+                # Reset episode-specific metrics
+                type2_count = 0
+                overwritten_count = 0
+                action_length_counts = {}  # Reset action length counts for new episode
             
             # Get agent action
             next_agent_obs = self.compute_next_agent_obs(torch.Tensor(obs).to(device), infos)
@@ -557,12 +680,27 @@ class BaseBlockingEvaluator(BaseEvaluator):
                 next_done = np.logical_or(terminations, truncations)
                 total_reward += reward
 
+                # Track additional metrics
+                agent_action_type = info["utterance"][0]
+                agent_action_length = info["utterance"][2]
+                
+                if agent_action_type == 2:
+                    type2_count += 1
+                    
+                if overwrite_flag:
+                    overwritten_count += 1
+                    
+                # Track action length frequencies
+                if agent_action_length not in action_length_counts:
+                    action_length_counts[agent_action_length] = 0
+                action_length_counts[agent_action_length] += 1
+
                 # Log trajectory data
                 trajectory_step = {
                     'step': step,
-                    'agent_action_type': info["utterance"][0],
+                    'agent_action_type': agent_action_type,
                     'agent_action': info["utterance"][1],
-                    'agent_action_length': info["utterance"][2],
+                    'agent_action_length': agent_action_length,
                     'human_action': human_action,
                     'overwritten': overwrite_flag,
                     'reward': reward
@@ -575,6 +713,13 @@ class BaseBlockingEvaluator(BaseEvaluator):
 
                 if next_done:
                     episodic_returns += [total_reward]
+                    # Add the new metrics for this episode
+                    episodic_type2_counts += [type2_count]
+                    episodic_overwritten_counts += [overwritten_count]
+                    for key, value in action_length_counts.items():
+                        if key not in episodic_action_length_varieties:
+                            episodic_action_length_varieties[key] = []
+                        episodic_action_length_varieties[key] += [value]
                     
                     # Visualize trajectory if enabled
                     if self.visualize:
@@ -593,7 +738,7 @@ class BaseBlockingEvaluator(BaseEvaluator):
                 obs = next_obs
                 agent_actions = np.array([[1,0,0]]* self.args.num_envs)
 
-        return episodic_returns
+        return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties
     
 class HeuristicEvaluator(BaseEvaluator):
     def __init__(self, args, run_name):
@@ -621,7 +766,17 @@ class HeuristicEvaluator(BaseEvaluator):
 
         obs, infos = envs.reset()
         episodic_returns = []
+        # New metrics
+        episodic_type2_counts = []
+        episodic_overwritten_counts = []
+        episodic_action_length_varieties = {}
+        
         total_reward = 0
+        # Initialize episode-specific metrics
+        type2_count = 0
+        overwritten_count = 0
+        action_length_counts = {}  # Dictionary to track frequency of each action length
+        
         step = 0
         episode_idx = 0
 
@@ -629,6 +784,10 @@ class HeuristicEvaluator(BaseEvaluator):
             # Initialize trajectory data for this episode
             if step == 0:
                 trajectory_data = []
+                # Reset episode-specific metrics
+                type2_count = 0
+                overwritten_count = 0
+                action_length_counts = {}  # Reset action length counts for new episode
 
             # Get human action if applicable
             next_agent_obs = torch.cat([torch.Tensor(obs).to(device), torch.Tensor(infos['utterance']).to(device)], dim=1)
@@ -644,15 +803,30 @@ class HeuristicEvaluator(BaseEvaluator):
             next_done = np.logical_or(terminations, truncations)
             total_reward += reward
             
+            # Track additional metrics
+            agent_action_type = info["utterance"][0]
+            agent_action_length = info["utterance"][2]
+            
+            if agent_action_type == 2:
+                type2_count += 1
+                
+            if overwrite_flag:
+                overwritten_count += 1
+                
+            # Track action length frequencies
+            if agent_action_length not in action_length_counts:
+                action_length_counts[agent_action_length] = 0
+            action_length_counts[agent_action_length] += 1
+            
             # Log trajectory data
             trajectory_step = {
                 'step': step,
-                'agent_action_type': info["utterance"][0],
+                'agent_action_type': agent_action_type,
                 'agent_action': info["utterance"][1],
-                'agent_action_length': info["utterance"][2],
+                'agent_action_length': agent_action_length,
                 'human_action': human_action,
                 'overwritten': overwrite_flag,
-                'reward': reward
+                'reward': reward,
             }
 
             # Update trajectory data with reward
@@ -662,6 +836,13 @@ class HeuristicEvaluator(BaseEvaluator):
             
             if next_done:
                 episodic_returns += [total_reward]
+                # Add the new metrics for this episode
+                episodic_type2_counts += [type2_count]
+                episodic_overwritten_counts += [overwritten_count]
+                for key, value in action_length_counts.items():
+                    if key not in episodic_action_length_varieties:
+                        episodic_action_length_varieties[key] = []
+                    episodic_action_length_varieties[key] += [value]
                 
                 # Visualize trajectory if enabled
                 if self.visualize:
@@ -682,4 +863,4 @@ class HeuristicEvaluator(BaseEvaluator):
             
             obs = next_obs
 
-        return episodic_returns
+        return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties

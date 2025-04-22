@@ -29,6 +29,37 @@ class BaseTrainer:
         self.evaluator = BaseEvaluator(args, run_name)
         self.human_agent = human_agent
 
+    def _log_eval_metrics(self, episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step):
+        """Helper function to log evaluation metrics to wandb."""
+        # Log basic metrics
+        wandb.log({
+            f"eval/episodic_mean_return": np.mean(episodic_returns),
+            f"eval/notify_mean_count": np.mean(type2_counts),
+            f"eval/overwritten_mean_count": np.mean(overwritten_counts),
+        }, step=global_step)
+
+        # Create data for the combined action length plot
+        action_length_data = []
+        for key, value in action_length_varieties.items():
+            mean_count = np.mean(value)
+            wandb.log({
+                f"eval/action_length_{key}_mean_count": mean_count
+            }, step=global_step)
+            action_length_data.append([int(key), mean_count])
+
+        # Sort data by action length for consistent plotting
+        action_length_data.sort(key=lambda x: x[0])
+
+        # Create a combined line plot for all action lengths
+        wandb.log({
+            "eval/action_length_counts": wandb.plot.line_series(
+                xs=[global_step] * len(action_length_data),
+                ys=[[d[1]] for d in action_length_data],
+                keys=[f"Length {d[0]}" for d in action_length_data],
+                title="Action Length Counts Over Time"
+            )
+        }, step=global_step)
+
     def train(self):
         # TRY NOT TO MODIFY: seeding
         random.seed(self.args.seed)
@@ -127,7 +158,7 @@ class BaseTrainer:
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                episodic_returns = self.evaluator.evaluate(
+                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                     f"{wandb.run.dir}/agent.pt",
                     make_env,
                     eval_episodes=3,
@@ -143,8 +174,9 @@ class BaseTrainer:
                             wandb.log({
                                 f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
                             }, step=global_step)
-                for i in range(len(episodic_returns)):  
-                    self.writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
+                
+                # Log evaluation metrics using the helper function
+                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -280,7 +312,7 @@ class LSTMTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                episodic_returns = self.evaluator.evaluate(
+                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                     f"{wandb.run.dir}/agent.pt",
                     make_env,
                     eval_episodes=3,
@@ -295,8 +327,9 @@ class LSTMTrainer(BaseTrainer):
                             wandb.log({
                                 f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
                             }, step=global_step)
-                for i in range(len(episodic_returns)):  
-                    self.writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
+                
+                # Log evaluation metrics using the helper function
+                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -422,7 +455,7 @@ class TransformerTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                episodic_returns = self.evaluator.evaluate(
+                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                     f"{wandb.run.dir}/agent.pt",
                     make_env,
                     eval_episodes=3,
@@ -437,8 +470,9 @@ class TransformerTrainer(BaseTrainer):
                             wandb.log({
                                 f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
                             }, step=global_step)
-                for i in range(len(episodic_returns)):  
-                    self.writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
+                
+                # Log evaluation metrics using the helper function
+                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -483,7 +517,7 @@ class HeuristicTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
                 
-                episodic_returns = self.evaluator.evaluate(
+                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                     f"{wandb.run.dir}/agent.pt",
                     make_env,
                     eval_episodes=3,
@@ -498,8 +532,9 @@ class HeuristicTrainer(BaseTrainer):
                             wandb.log({
                                 f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
                             }, step=global_step)
-                for i in range(len(episodic_returns)):  
-                    self.writer.add_scalar(f"eval/episodic_return", episodic_returns[i], global_step)
+                
+                # Log evaluation metrics using the helper function
+                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
 
             # Log performance metrics
             print("SPS:", int(global_step / (time.time() - start_time)))
@@ -514,4 +549,51 @@ class BlockingTrainer(BaseTrainer):
         super().__init__(agent, envs, args, writer, run_name, device, human_agent)
         self.rollout_collector = BaseBlockingRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = BaseBlockingEvaluator(args, run_name)
+
+    def train(self):
+        """Train the blocking agent"""
+        # Seeding
+        random.seed(self.args.seed)
+        np.random.seed(self.args.seed)
+        torch.manual_seed(self.args.seed)
+        torch.backends.cudnn.deterministic = self.args.torch_deterministic
+
+        global_step = 0
+        start_time = time.time()
+
+        for iteration in range(1, self.args.num_iterations + 1):
+            # Collect rollouts using the blocking agent
+            results = self.rollout_collector.collect_rollouts(global_step)
+            global_step = results["global_step"]
+
+            # Log metrics
+            if self.args.track and global_step % self.args.save_freq == 0:
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
+                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                
+                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
+                    f"{wandb.run.dir}/agent.pt",
+                    make_env,
+                    eval_episodes=3,
+                    model=self.agent.__class__,
+                    device="cpu",
+                    capture_video=True,
+                )
+
+                if os.path.exists(f"videos/{self.run_name}"):
+                    for video_file in os.listdir(f"videos/{self.run_name}"):
+                        if video_file.endswith(".mp4"):
+                            wandb.log({
+                                f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
+                            }, step=global_step)
+                
+                # Log evaluation metrics using the helper function
+                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
+
+            # Log performance metrics
+            print("SPS:", int(global_step / (time.time() - start_time)))
+            self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        self.envs.close()
+        self.writer.close()
         
