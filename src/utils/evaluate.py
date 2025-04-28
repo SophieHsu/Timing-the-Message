@@ -911,9 +911,22 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         device: torch.device = torch.device("cpu"),
         capture_video: bool = True,
         visualize: bool = False,
+        use_random_start_state: bool = True,
+        random_start_pos: bool = True,
+        rnd_obj_prob_thresh: float = 0.5,
     ):
         layout_name = self.args.layout_name
         world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
+        
+        # Configure random start state if requested
+        if use_random_start_state:
+            random_start_state_fn = world_mdp.get_random_objects_start_state_fn(
+                random_start_pos=random_start_pos,
+                rnd_obj_prob_thresh=rnd_obj_prob_thresh
+            )
+            # Set the start state function in the MDP
+            world_mdp.start_state_fn = random_start_state_fn
+        
         mlam = self.SteakMediumLevelActionManager.from_pickle_or_compute(
                 world_mdp,
                 {
@@ -929,7 +942,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
                 force_compute=False,
                 info=False,
             )
-        env = self.CommsSteakhouseEnv.from_mdp(world_mdp, horizon=self.args.max_episode_steps, mlam=mlam, discretization=self.args.discretization)
+        env = self.CommsSteakhouseEnv.from_mdp(world_mdp, start_state_fn=world_mdp.start_state_fn, horizon=self.args.max_episode_steps, mlam=mlam, discretization=self.args.discretization)
         COUNTERS_PARAMS = {
             'start_orientations': True,
             'wait_allowed': True,
@@ -948,7 +961,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
             device=device,
         )
         agent1.steakhouse_planner.set_agent_index(0)
-        agent1.steakhouse_planner.init_knowledge_base(env.state)
+        agent1.steakhouse_planner.init_knowledge_base(world_mdp.get_standard_start_state())
         agent1.steakhouse_planner.set_mdp(env.mdp)
 
         notifier_model = self.NotifierLSTMAgent(
@@ -961,7 +974,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         notifier_model.to(self.device)
 
         # agent2 = SteakGreedyHumanModel(mlam)
-        agent2 = self.LangStayAgent(mlam, env.state, notifier_model=notifier_model, auto_unstuck=True, explore=self.args.EXPLORE, vision_limit=self.args.VISION_LIMIT, vision_bound=360, kb_update_delay=1, kb_ackn_prob=False, debug=True)
+        agent2 = self.LangStayAgent(mlam, env.state, notifier_model=notifier_model, auto_unstuck=True, explore=self.args.EXPLORE, vision_limit=self.args.VISION_LIMIT, vision_bound=360, kb_update_delay=1, kb_ackn_prob=False, debug=False)
         agent2.set_agent_index(1)
         agent2.init_knowledge_base(env.state)
         agent2.set_mdp(env.mdp)

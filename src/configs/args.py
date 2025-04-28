@@ -92,6 +92,7 @@ class Args:
     order_list: list = None
     rand_start: bool = False
     discretization: str = "simple"
+    auto_unstuck: bool = False
     VISION_LIMIT: bool = True
     VISION_BOUND: int = 120
     VISION_MODE: str = "grid"

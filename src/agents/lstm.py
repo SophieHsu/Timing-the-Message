@@ -69,6 +69,7 @@ class LSTMAgent(nn.Module):
 
 class NotifierLSTMAgent(LSTMAgent):
     def __init__(self, args, single_observation_space=None, single_action_space=None):
+        self.args = args
         self.human_utterance_memory_length = args.human_utterance_memory_length
         self.agent_obs_mode = args.agent_obs_mode
         flatten_observation_space = np.array(single_observation_space).prod() if isinstance(single_observation_space, tuple) else np.array(single_observation_space.shape).prod()
@@ -77,14 +78,21 @@ class NotifierLSTMAgent(LSTMAgent):
         else:
             self.single_observation_space = flatten_observation_space
         super().__init__(args, self.single_observation_space, single_action_space)
+        self.use_react_head = False
 
         self.use_condition_head = args.use_condition_head
-        self.condition_dim, self.id_dim, self.length_dim, _ = single_action_space.nvec
+        if len(single_action_space.nvec) == 4:
+            self.condition_dim, self.id_dim, self.length_dim, _ = single_action_space.nvec
+        else:
+            self.use_react_head = True
+            self.condition_dim, self.id_dim, self.react_dim, self.length_dim, _ = single_action_space.nvec
 
         if self.use_condition_head:
             self.condition_head = layer_init(nn.Linear(128, self.condition_dim), std=0.01)
         self.id_head = layer_init(nn.Linear(128, self.id_dim), std=0.01)
         self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
+        if self.use_react_head:
+            self.react_head = nn.Linear(128, self.react_dim)
 
     def get_action_and_value(self, x, lstm_state, done, action=None):
         hidden, lstm_state = self.get_states(x, lstm_state, done)
@@ -99,14 +107,28 @@ class NotifierLSTMAgent(LSTMAgent):
             condition_logits = self.condition_head(hidden)
             condition_probs = Categorical(logits=condition_logits)
 
+        if self.use_react_head:
+            react_logits = self.react_head(hidden)
+            react_probs = Categorical(logits=react_logits)
+
         if action is None:
             if self.use_condition_head:
                 condition = condition_probs.sample()
             else:
                 condition = torch.zeros(self.args.num_envs).to(self.args.device)
+
+            if self.use_react_head:
+                react = react_probs.sample()
+            else:
+                react = torch.zeros(self.args.num_envs).to(self.args.device)
+
             id = id_probs.sample()
             length = length_probs.sample()
-            action = torch.stack([condition, id, length], dim=1)
+
+            if self.use_react_head:
+                action = torch.stack([condition, id, length, react], dim=1)
+            else:
+                action = torch.stack([condition, id, length], dim=1)
 
         if self.use_condition_head:
             logprob = condition_probs.log_prob(action[:, 0]) + id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
@@ -114,5 +136,9 @@ class NotifierLSTMAgent(LSTMAgent):
         else:
             logprob = id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
             entropy = id_probs.entropy() + length_probs.entropy()
+
+        if self.use_react_head:
+            logprob = logprob + react_probs.log_prob(action[:, 3])
+            entropy = entropy + react_probs.entropy()
 
         return action, logprob, entropy, self.critic(hidden), lstm_state

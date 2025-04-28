@@ -758,6 +758,8 @@ class CookingLSTMRolloutWorker:
             next_state, reward, next_done, info = self.env.step(full_actions)
             next_obs = self.agent.get_obs(next_state)
             reward -= 0.1
+            if info["utterance"][0] == 2:
+                reward -= 0.1
             reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
             total_reward += reward
             rewards[step] = torch.tensor(reward).to(device).view(-1)
