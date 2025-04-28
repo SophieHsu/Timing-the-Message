@@ -304,10 +304,10 @@ class NotiLunarLander(gym.Env, EzPickle):
                 5.0,
                 1.0,
                 1.0,
-                3.0,
-                3.0,
-                3.0,
-                3.0
+                5.0,
+                5.0,
+                5.0,
+                5.0
             ]
         ).astype(np.float32)
 
@@ -579,7 +579,7 @@ class NotiLunarLander(gym.Env, EzPickle):
         else:
             # process notification length: 2 or 5
             noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
-            noti_action[-1] = (noti_action[-1]*3) + 2
+            noti_action[2] = (noti_action[2]*3) + 2
 
         self.noti_history.append(noti_action)
         self.curr_agent_action = action
@@ -807,7 +807,7 @@ class NotiLunarLander(gym.Env, EzPickle):
             noti_action = np.array([-1,0,0])
         else: # new notification
             # process notification length: 2 or 5
-            noti_action[-1] += (noti_action[-1]*3) + 2
+            noti_action[2] += (noti_action[2]*3) + 2
         info["utterance"] = noti_action
 
         if self.render_mode == "human":
@@ -1057,7 +1057,7 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
         else:
             # process notification length: 2 or 5
             noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
-            noti_action[-1] = (noti_action[-1]*3) + 2
+            noti_action[2] = (noti_action[2]*3) + 2
         
         self.noti_history.append(noti_action)
         self.curr_agent_action = action
@@ -1320,21 +1320,58 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
 class DangerZoneLunarLander(LargeRewardNotiLunarLander):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.danger_zones = [
-            [[-1.0, -0.6], [1.0, 1.33]],
-            [[-0.3, 1.0], [0.3, 0.6]],
-            [[0.3, 1.0], [0, 0.3]],
+        # Define a set of possible danger zone configurations
+        self.possible_danger_zones = [
+            # Configuration 1: Three zones forming a challenging path
+            [
+                [[-1.0, -0.6], [1.0, 1.33]],
+                [[-0.3, 1.0], [0.3, 0.6]],
+                [[0.3, 1.0], [0, 0.3]]
+            ],
+            # Configuration 2: Three zones with left-side emphasis
+            [
+                [[-1.0, -0.3], [0.1, 0.3]],
+                [[-1.0, 0.3], [0.3, 0.6]],
+                [[0.7, 1.0], [0.8, 1.33]]
+            ],
+            # Configuration 3: Single central barrier
+            [
+                [[-0.5, 0.5], [0.4, 0.7]]
+            ],
+            # Configuration 4: Two zones creating a narrow path
+            [
+                [[-0.3, 0.7], [0.5, 0.8]],
+                [[0.6, 1.0], [0.8, 1.33]]
+            ],
+            # Configuration 5: Single large central block
+            [
+                [[-0.6, 0.0], [0.6, 0.9]]
+            ],
+            # Configuration 6: Two blocks on left side
+            [
+                [[-1.0, -0.5], [0.8, 1.33]],
+                [[0.2, 0.6], [0.5, 1.33]]
+            ]
         ]
+        # Select a first danger zone configuration at initialization
+        self.danger_zones = self.possible_danger_zones[0]
         self.time_penalty = -0.0
         self.prev_state = None
         self.enable_wind = False
-
+        self.random_danger_zone = False
+        self.noti_action_length = len(self.action_space.nvec)-1
+        
     def reset(
         self,
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
     ):
+        if self.random_danger_zone:
+            self.select_random_danger_zone()
+        else:
+            self.danger_zones = self.possible_danger_zones[0]
+            
         super().reset(seed=seed)
         self._destroy()
         self.world.contactListener_keepref = ContactDetector(self)
@@ -1461,29 +1498,32 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         except:
             pass
 
-        next_obs, _, _, _, info = self.step([0,0,0, np.array([0, 0])] if self.continuous else [0,0,0, 0])
+        next_obs, _, _, _, info = self.step([0]*self.noti_action_length + [np.array([0, 0])] if self.continuous else [0]*self.noti_action_length + [0, 0])
 
         return next_obs, info
 
+    
+    def select_random_danger_zone(self):
+        """Randomly select a danger zone configuration from the possible configurations"""
+        idx = self.np_random.integers(len(self.possible_danger_zones))
+        self.danger_zones = self.possible_danger_zones[idx]
+    
     def step(self, joint_action, overwrite_flag=False):
-        if self.human_agent_idx == 0:
-            action = joint_action[0]
-            noti_action = np.array(joint_action[1:-1])
-            overwrite_flag = joint_action[-1]
-        else:
-            action = joint_action[-2]
-            noti_action = np.array(joint_action[:-2])
-            overwrite_flag = joint_action[-1]
+        action = joint_action[-2]
+        noti_action = np.array(joint_action[:-2])
+        overwrite_flag = joint_action[-1]
         
         # Store notification in history
         if noti_action[0] == 0: # no notification
-            noti_action = np.array([0,0,0])
+            noti_action = np.array([0]*self.noti_action_length)
         elif noti_action[0] == 1: # continue previous notification
-            noti_action = np.array([1,0,0])
+            noti_action = np.array([1] + [0]*(self.noti_action_length-1))
         else:
             # process notification length: 2 or 5
-            noti_action[1] = noti_action[1] + 1 # here we add 1 to the action id so that 0 is the no-op action from the action type, and the agent should only choose left, up, or right, which each id corresponds to 1, 2, or 3.
-            noti_action[-1] = (noti_action[-1]*3) + 2
+            noti_action[2] = (noti_action[2]*3) + 2
+
+            if self.noti_action_length > 3:
+                noti_action[3] = min(noti_action[2], (noti_action[3]*3)+2)
         
         self.noti_history.append(noti_action)
         self.curr_agent_action = action
@@ -1665,13 +1705,21 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         info = {}
 
         # cost for speaking
-        noti_penalty = -1 #-0.3
+        noti_penalty = -3 #-0.3
         if noti_action[0] == 2:
             reward += noti_penalty
             self.reward_components["noti_penalty"] = noti_penalty
         else:
             self.reward_components["noti_penalty"] = 0
 
+        # value for longer notification
+        noti_content_reward = 2
+        if noti_action[0] == 2:
+            self.reward_components["noti_content_reward"] = (noti_action[2]-2)+noti_content_reward # reward length 5 with 2; and length 2 with 0
+        else:
+            self.reward_components["noti_content_reward"] = 0
+        reward += self.reward_components["noti_content_reward"]
+        
         shaping = (
             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
@@ -1683,14 +1731,14 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         if self.prev_shaping is not None:
             reward += shaping - self.prev_shaping
         self.prev_shaping = shaping
-        self.reward_components["shaping"] = shaping
+        # self.reward_components["shaping"] = shaping
 
         reward -= (
             m_power * 0.30
         )  # less fuel spent is better, about -30 for heuristic landing
         reward -= s_power * 0.03
 
-        self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
+        # self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
 
         # Danger zone penalties
         danger_zone_penalty = -30 * (
@@ -1777,6 +1825,18 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.prev_state = state.copy()  
 
         return np.array(state, dtype=np.float32), reward, terminated, truncated, info
+
+class SimpleNotiDangerZoneLunarLander(DangerZoneLunarLander):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_space = spaces.MultiDiscrete([3, 3, 2, 4])
+        self.noti_action_length = len(self.action_space.nvec)-1
+
+class ComplexNotiDangerZoneLunarLander(DangerZoneLunarLander):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_space = spaces.MultiDiscrete([3, 3, 2, 2, 4])
+        self.noti_action_length = len(self.action_space.nvec)-1
 
 
 def heuristic(env, s):

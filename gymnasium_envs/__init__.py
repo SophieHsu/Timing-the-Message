@@ -17,16 +17,11 @@ register(
 )
 
 register(
-    id="NotiHighway",
-    entry_point="gymnasium_envs.envs.highway:NotiHighway",
+    id="SimpleNotiDangerZoneLunarLander",
+    entry_point="gymnasium_envs.envs.lunar_lander:SimpleNotiDangerZoneLunarLander",
 )
 
 register(
-    id="NotiHighwayFast",
-    entry_point="gymnasium_envs.envs.highway:NotiHighwayFast",
-)
-
-register(
-    id="Simple1DEnv",
-    entry_point="gymnasium_envs.envs.test_env:Simple1DEnv",
+    id="ComplexNotiDangerZoneLunarLander",
+    entry_point="gymnasium_envs.envs.lunar_lander:ComplexNotiDangerZoneLunarLander",
 )

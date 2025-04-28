@@ -11,9 +11,9 @@ import random
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector, BaseBlockingRolloutCollector
-from utils.util import make_env
-from utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator, BaseBlockingEvaluator
+from src.utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector, BaseBlockingRolloutCollector, CookingLSTMRolloutCollector
+from src.utils.util import make_env
+from src.utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator, BaseBlockingEvaluator, CookingLSTMEvaluator
 
 
 class BaseTrainer:
@@ -165,7 +165,7 @@ class BaseTrainer:
                     model=self.agent.__class__,
                     device="cpu",
                     capture_video=True,
-                    visualize=True,
+                    visualize=False,
                 )
 
                 if os.path.exists(f"videos/{self.run_name}"):
@@ -597,3 +597,11 @@ class BlockingTrainer(BaseTrainer):
         self.envs.close()
         self.writer.close()
         
+
+class CookingLSTMTrainer(LSTMTrainer):
+    def __init__(self, agent, envs, args, writer, run_name, device, human_agent, ray_debug_mode=False):
+        
+        super().__init__(agent, envs, args, writer, run_name, device, human_agent)
+        self.rollout_collector = CookingLSTMRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space, ray_debug_mode=ray_debug_mode)
+        self.evaluator = CookingLSTMEvaluator(args, run_name)
+

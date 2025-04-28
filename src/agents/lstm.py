@@ -1,14 +1,19 @@
 import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
-from utils.util import layer_init
 import numpy as np
 
+
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
 class LSTMAgent(nn.Module):
-    def __init__(self, envs, args, single_observation_space=None):
+    def __init__(self, args, single_observation_space=None, single_action_space=None):
         super().__init__()
         self.lstm_size = args.lstm_size
-        self.single_observation_space = envs.single_observation_space.shape[0] if single_observation_space is None else single_observation_space
+        self.single_observation_space = single_observation_space.shape[0] if single_observation_space is None else single_observation_space
         self.network = nn.Sequential(
             layer_init(nn.Linear(self.single_observation_space, 128)),
             nn.ReLU(),
@@ -23,7 +28,7 @@ class LSTMAgent(nn.Module):
                 nn.init.constant_(param, 0)
             elif "weight" in name:
                 nn.init.orthogonal_(param, 1)
-        self.actor = layer_init(nn.Linear(128, envs.single_action_space[-1].n), std=0.01)
+        self.actor = layer_init(nn.Linear(128, single_action_space[-1].n), std=0.01)
         self.critic = layer_init(nn.Linear(128, 1), std=1)
 
     def get_states(self, x, lstm_state, done):
@@ -63,18 +68,18 @@ class LSTMAgent(nn.Module):
     
 
 class NotifierLSTMAgent(LSTMAgent):
-    def __init__(self, envs, args):
+    def __init__(self, args, single_observation_space=None, single_action_space=None):
         self.human_utterance_memory_length = args.human_utterance_memory_length
         self.agent_obs_mode = args.agent_obs_mode
+        flatten_observation_space = np.array(single_observation_space).prod() if isinstance(single_observation_space, tuple) else np.array(single_observation_space.shape).prod()
         if self.agent_obs_mode == "history":
-            self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.human_utterance_memory_length
+            self.single_observation_space = (flatten_observation_space + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
         else:
-            self.single_observation_space = np.array(envs.single_observation_space.shape).prod()
-        super().__init__(envs, args, self.single_observation_space)
+            self.single_observation_space = flatten_observation_space
+        super().__init__(args, self.single_observation_space, single_action_space)
 
         self.use_condition_head = args.use_condition_head
-        hidden_dim = 64
-        self.condition_dim, self.id_dim, self.length_dim, _ = envs.single_action_space.nvec
+        self.condition_dim, self.id_dim, self.length_dim, _ = single_action_space.nvec
 
         if self.use_condition_head:
             self.condition_head = layer_init(nn.Linear(128, self.condition_dim), std=0.01)

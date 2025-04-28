@@ -3,6 +3,10 @@ import gymnasium as gym
 import numpy as np
 from typing import Callable
 import os
+import cv2
+import pygame
+from pathlib import Path
+import time
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,21 +18,23 @@ import json
 from pathlib import Path
 
 class BaseEvaluator:
-    def __init__(self, args, run_name):
+    def __init__(self, args, run_name, num_envs=None):
         self.args = copy.deepcopy(args)
         self.run_name = run_name
         self.visualize = False  # Default to not visualizing
         self.trajectory_data = []  # Store trajectory data for visualization
+        self.num_envs = num_envs if num_envs is not None else args.num_envs
+        self.device = args.device
 
     def compute_next_agent_obs(self, next_obs, infos):
         if self.args.agent_obs_mode == "history":
-            reshape_next_obs = next_obs.reshape(self.args.num_envs, -1)
-            curr_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
-            prev_agent_obs = self.full_next_agent_obs[-1].reshape(self.args.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
-            next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(self.args.num_envs, -1)
+            reshape_next_obs = next_obs.reshape(self.num_envs, -1).to(self.device)
+            curr_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.device)], dim=1)
+            prev_agent_obs = self.full_next_agent_obs[-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:].to(self.device)
+            next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(self.num_envs, -1)
         else:
-            reshape_next_obs = next_obs.reshape(self.args.num_envs, -1)
-            next_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.args.device)], dim=1)
+            reshape_next_obs = next_obs.reshape(self.num_envs, -1).to(self.device)
+            next_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.device)], dim=1)
 
         return next_agent_obs
 
@@ -129,22 +135,23 @@ class BaseEvaluator:
         plt.close()
         
         # Save trajectory data as JSON
-        with open(f"plots/{self.run_name}/episode_{episode_idx}.json", 'w') as f:
-            # Convert NumPy types to Python native types for JSON serialization
-            def convert_numpy_types(obj):
-                if isinstance(obj, np.integer):
-                    return int(obj)
-                elif isinstance(obj, np.floating):
-                    return float(obj)
-                elif isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                elif isinstance(obj, dict):
-                    return {key: convert_numpy_types(value) for key, value in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_numpy_types(item) for item in obj]
-                return obj
-            
-            json.dump(convert_numpy_types(trajectory_data), f, indent=2)
+        if self.args.save_trajectory:
+            with open(f"plots/{self.run_name}/episode_{episode_idx}.json", 'w') as f:
+                # Convert NumPy types to Python native types for JSON serialization
+                def convert_numpy_types(obj):
+                    if isinstance(obj, np.integer):
+                        return int(obj)
+                    elif isinstance(obj, np.floating):
+                        return float(obj)
+                    elif isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, dict):
+                        return {key: convert_numpy_types(value) for key, value in obj.items()}
+                    elif isinstance(obj, list):
+                        return [convert_numpy_types(item) for item in obj]
+                    return obj
+                
+                json.dump(convert_numpy_types(trajectory_data), f, indent=2)
 
     def evaluate(self,
         model_path: str,
@@ -162,10 +169,10 @@ class BaseEvaluator:
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
-        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((self.args.max_episode_steps, self.args.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((self.args.max_episode_steps, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*10, self.num_envs) + (agent.single_observation_space,)).to(device)
 
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
@@ -286,8 +293,8 @@ class BaseEvaluator:
 
 
 class LSTMEvaluator(BaseEvaluator):
-    def __init__(self, args, run_name):
-        super().__init__(args, run_name)
+    def __init__(self, args, run_name, num_envs=None):
+        super().__init__(args, run_name, num_envs)
     
     def evaluate(self,
         model_path: str,
@@ -305,10 +312,10 @@ class LSTMEvaluator(BaseEvaluator):
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
-        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((600, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (agent.single_observation_space,)).to(device)
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
             human_agent = HumanAgent(envs, self.args, device)
@@ -627,10 +634,10 @@ class BaseBlockingEvaluator(BaseEvaluator):
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
-        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
-        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (agent.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((600, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (agent.single_observation_space,)).to(device)
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
             human_agent = HumanAgent(envs, self.args, device)
@@ -736,10 +743,11 @@ class BaseBlockingEvaluator(BaseEvaluator):
                     step += 1
                     
                 obs = next_obs
-                agent_actions = np.array([[1,0,0]]* self.args.num_envs)
+                agent_actions = np.array([[1,0,0]]* self.num_envs)
 
         return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties
-    
+
+
 class HeuristicEvaluator(BaseEvaluator):
     def __init__(self, args, run_name):
         super().__init__(args, run_name)
@@ -756,11 +764,11 @@ class HeuristicEvaluator(BaseEvaluator):
         envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
         agent = HeuristicAgent(envs, self.args)
 
-        self.args.num_envs = 1 # Override num_envs to 1 for evaluation
+        self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
         self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.args.human_utterance_memory_length
-        self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (self.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (self.single_observation_space,)).to(device)
+        self.next_agent_obs = torch.zeros((600, self.num_envs) + (self.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (self.single_observation_space,)).to(device)
         self.args.device = device
         human_agent = HumanAgent(envs, self.args, device)
 
@@ -856,11 +864,124 @@ class HeuristicEvaluator(BaseEvaluator):
                 if human_agent is not None:
                     human_agent.reset()
 
-                self.next_agent_obs = torch.zeros((600, self.args.num_envs) + (self.single_observation_space,)).to(device)
-                self.full_next_agent_obs = torch.zeros((600*10, self.args.num_envs) + (self.single_observation_space,)).to(device)
+                self.next_agent_obs = torch.zeros((600, self.num_envs) + (self.single_observation_space,)).to(device)
+                self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (self.single_observation_space,)).to(device)
             else:
                 step += 1
             
             obs = next_obs
 
         return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties
+
+
+class CookingLSTMEvaluator(LSTMEvaluator):
+    def __init__(self, args, run_name, num_envs=1):
+        super().__init__(args, run_name, num_envs)
+        # Import required modules for the cooking environment
+        import math
+        from steakhouse_ai_py.mdp.steakhouse_env import CommsSteakhouseEnv
+        from steakhouse_ai_py.mdp.steakhouse_mdp import SteakhouseGridworld
+        from steakhouse_ai_py.planners.steak_planner import SteakMediumLevelActionManager
+        from steakhouse_ai_py.agents.notifier_agent import LangStayAgent
+        from src.agents.humans import HumanChefAgent
+        from src.agents.lstm import NotifierLSTMAgent
+        from steakhouse_ai.src.utils import Logger, StudyConfig, initialize_config_from_args, LangOvercookedPygame
+
+        # Store these imports for later use
+        self.CommsSteakhouseEnv = CommsSteakhouseEnv
+        self.SteakhouseGridworld = SteakhouseGridworld
+        self.SteakMediumLevelActionManager = SteakMediumLevelActionManager
+        self.LangStayAgent = LangStayAgent
+        self.HumanChefAgent = HumanChefAgent
+        self.NotifierLSTMAgent = NotifierLSTMAgent
+        self.math = math
+        self.Logger = Logger
+        self.StudyConfig = StudyConfig
+        self.initialize_config_from_args = initialize_config_from_args
+        self.LangOvercookedPygame = LangOvercookedPygame
+        # Video saving settings
+        self.video_fps = 10
+        self.frame_count = 0
+        
+    def evaluate(self,
+        model_path: str,
+        make_env: Callable,
+        eval_episodes: int,
+        model: torch.nn.Module,
+        device: torch.device = torch.device("cpu"),
+        capture_video: bool = True,
+        visualize: bool = False,
+    ):
+        layout_name = self.args.layout_name
+        world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
+        mlam = self.SteakMediumLevelActionManager.from_pickle_or_compute(
+                world_mdp,
+                {
+                    'start_orientations': True,
+                    'wait_allowed': True,
+                    'counter_goals': [],
+                    'counter_drop': world_mdp.terrain_pos_dict['X'],
+                    'counter_pickup': world_mdp.terrain_pos_dict['X'],
+                    'same_motion_goals': True,
+                    "enable_same_cell": True,
+                },
+                custom_filename=None,
+                force_compute=False,
+                info=False,
+            )
+        env = self.CommsSteakhouseEnv.from_mdp(world_mdp, horizon=self.args.max_episode_steps, mlam=mlam, discretization=self.args.discretization)
+        COUNTERS_PARAMS = {
+            'start_orientations': True,
+            'wait_allowed': True,
+            'counter_goals': [],
+            'counter_drop': world_mdp.terrain_pos_dict['X'],
+            'counter_pickup': world_mdp.terrain_pos_dict['X'],
+            'same_motion_goals': True,
+            "enable_same_cell": True,
+        }
+        # Initialize two human agent
+        mlam = self.SteakMediumLevelActionManager(world_mdp, COUNTERS_PARAMS)
+
+        agent1 = self.HumanChefAgent(
+            envs=env,
+            args=self.args,
+            device=device,
+        )
+        agent1.steakhouse_planner.set_agent_index(0)
+        agent1.steakhouse_planner.init_knowledge_base(env.state)
+        agent1.steakhouse_planner.set_mdp(env.mdp)
+
+        notifier_model = self.NotifierLSTMAgent(
+            args=self.args,
+            single_observation_space=env.single_observation_space,
+            single_action_space=env.single_action_space,
+        )
+        notifier_model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        notifier_model.eval()
+        notifier_model.to(self.device)
+
+        # agent2 = SteakGreedyHumanModel(mlam)
+        agent2 = self.LangStayAgent(mlam, env.state, notifier_model=notifier_model, auto_unstuck=True, explore=self.args.EXPLORE, vision_limit=self.args.VISION_LIMIT, vision_bound=360, kb_update_delay=1, kb_ackn_prob=False, debug=True)
+        agent2.set_agent_index(1)
+        agent2.init_knowledge_base(env.state)
+        agent2.set_mdp(env.mdp)
+
+        self.args.log_file_name = f"{self.run_name}"
+        self.args.record_video = capture_video
+        self.args.total_time = self.args.max_episode_steps
+        study_config = self.StudyConfig(self.args, self.args.layout_name)
+        # Initialize logging
+        logger = self.Logger(study_config, study_config.log_file_name, agent1=agent1, agent2=agent2, log_folder=f"videos/{self.run_name}")
+        gametime = 10000
+        gameapp = self.LangOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime)
+        score, type2_counts, overwritten_counts, action_length_varieties = gameapp.on_execute()
+        
+        del env
+        del agent1
+        del agent2
+        del notifier_model
+        del logger
+        del gameapp
+        
+
+        return score, type2_counts, overwritten_counts, action_length_varieties

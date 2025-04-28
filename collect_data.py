@@ -72,7 +72,7 @@ def main():
     if args.agent_type != "heuristic":
         # Load the trained agent
         api = wandb.Api()
-        run = api.run(f"yachuanh/timing/{args.model_run_id}")
+        run = api.run(f"{args.wandb_entity}/timing/{args.model_run_id}")
         model_path = run.config['filepath'] + "/agent.pt"
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -158,7 +158,7 @@ def main():
                     }
                     
                     # Add environment-specific data
-                    if args.env_id == "DangerZoneLunarLander":
+                    if "DangerZoneLunarLander" in args.env_id:
                         # Add danger zone distances for Lunar Lander
                         trajectory_step['distance_to_danger'] = {
                             'left': None if len(obs[env_idx]) < 9 else obs[env_idx][8], 
@@ -172,7 +172,7 @@ def main():
                             'top': None if len(next_obs[env_idx]) < 11 else next_obs[env_idx][10], 
                             'bottom': None if len(next_obs[env_idx]) < 12 else next_obs[env_idx][11]
                         }
-                    elif args.env_id == "multi-merge-v0":
+                    elif "multi-merge-v0" in args.env_id:
                         # Add vehicle information for highway environment
                         if 'vehicle_info' in infos:
                             trajectory_step['vehicle_info'] = infos['vehicle_info'][env_idx]
