@@ -81,7 +81,7 @@ def main():
         capture_video=True,
         visualize=cli_args.visualize,
         use_random_start_state=False,
-        fixed_objects_start_state_mode=2,
+        fixed_objects_start_state_mode=1,
     )
     
     # Print results

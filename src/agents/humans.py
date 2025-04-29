@@ -272,7 +272,9 @@ class HumanChefAgent(HumanAgent):
             if overwrite_action < 4:
                 action = Action.INDEX_TO_ACTION[overwrite_action]
             else:
-                action, _ = self.steakhouse_planner.action(env_state, vision_bound=360)
+                print(env_state)
+                self.steakhouse_planner.init_knowledge_base(env_state)
+                action, _ = self.steakhouse_planner.action(env_state, vision_bound=0)
 
         current_overwrite_flag = np.array((self.overwrite_action != -1) & (self.track_overwrite > 0), dtype=np.int32)
         

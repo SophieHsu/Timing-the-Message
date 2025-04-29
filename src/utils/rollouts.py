@@ -616,7 +616,13 @@ class CookingLSTMRolloutWorker:
         self.ray_debug_mode = ray_debug_mode
 
         self.device = self.args.device
-        self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization)
+
+        random_start_state_fn = self.world_mdp.get_random_objects_start_state_fn(
+                random_start_pos=True,
+                rnd_obj_prob_thresh=0.5
+            )
+        
+        self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization, random_start_state_fn=random_start_state_fn)
         self.env.reset(rand_start=self.args.rand_start)
         self.single_observation_space = tuple(list(self.env.mdp.shape) + [26])
         self.single_action_space_n = self.env.single_action_space
