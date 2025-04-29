@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.distributions.categorical import Categorical
 import numpy as np
 
+from src.feature_extractors.steakhouse_features import SteakhouseNotifierFeaturesExtractor
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -13,9 +15,9 @@ class LSTMAgent(nn.Module):
     def __init__(self, args, single_observation_space=None, single_action_space=None):
         super().__init__()
         self.lstm_size = args.lstm_size
-        self.single_observation_space = single_observation_space.shape[0] if single_observation_space is None else single_observation_space
+        single_observation_space = single_observation_space.shape[0] if single_observation_space is None else single_observation_space
         self.network = nn.Sequential(
-            layer_init(nn.Linear(self.single_observation_space, 128)),
+            layer_init(nn.Linear(single_observation_space, 128)),
             nn.ReLU(),
             layer_init(nn.Linear(128, 32)),
             nn.ReLU(),
@@ -73,11 +75,18 @@ class NotifierLSTMAgent(LSTMAgent):
         self.human_utterance_memory_length = args.human_utterance_memory_length
         self.agent_obs_mode = args.agent_obs_mode
         flatten_observation_space = np.array(single_observation_space).prod() if isinstance(single_observation_space, tuple) else np.array(single_observation_space.shape).prod()
+
         if self.agent_obs_mode == "history":
             self.single_observation_space = (flatten_observation_space + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
         else:
-            self.single_observation_space = flatten_observation_space
-        super().__init__(args, self.single_observation_space, single_action_space)
+            self.single_observation_space = flatten_observation_space + (single_action_space.shape[0]-1)
+
+        if self.args.env_id == "steakhouse" and self.agent_obs_mode == "history":
+            input_dim = (args.steakhouse_feature_dim + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
+        elif self.args.env_id == "steakhouse":
+            input_dim = (args.steakhouse_feature_dim + (single_action_space.shape[0]-1))
+
+        super().__init__(args, input_dim, single_action_space)
         self.use_react_head = False
 
         self.use_condition_head = args.use_condition_head
@@ -93,8 +102,28 @@ class NotifierLSTMAgent(LSTMAgent):
         self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
         if self.use_react_head:
             self.react_head = nn.Linear(128, self.react_dim)
+            
+        # Initialize feature extractor for steakhouse environment
+        if args.env_id == "steakhouse":
+            self.feature_extractor = SteakhouseNotifierFeaturesExtractor(
+                args, 
+                single_observation_space, 
+                features_dim=args.steakhouse_feature_dim
+            )
+    
+    def get_value(self, x, lstm_state, done):
+        if self.args.env_id == "steakhouse":
+            # Process through steakhouse feature extractor
+            x = self.feature_extractor(x)
+        hidden, _ = self.get_states(x, lstm_state, done)
+        return self.critic(hidden)
+
 
     def get_action_and_value(self, x, lstm_state, done, action=None):
+        if self.args.env_id == "steakhouse":
+            # Process through steakhouse feature extractor
+            x = self.feature_extractor(x)
+        
         hidden, lstm_state = self.get_states(x, lstm_state, done)
 
         id_logits = self.id_head(hidden)

@@ -5,6 +5,7 @@ import numpy as np
 
 from .base import BaseAgent
 from src.feature_extractors.highway_features import HighwayNotifierFeaturesExtractor
+from src.feature_extractors.steakhouse_features import SteakhouseNotifierFeaturesExtractor
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -71,6 +72,8 @@ class NotifierMLPAgent(MLPAgent):
 
         if args.feature_extractor == "highway":
             input_dim = (args.highway_features_dim + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
+        elif args.env_id == "steakhouse":
+            input_dim = (args.steakhouse_feature_dim + (single_action_space.shape[0]-1))*self.human_utterance_memory_lengthace
         else:
             input_dim = self.single_observation_space
 
@@ -85,6 +88,13 @@ class NotifierMLPAgent(MLPAgent):
                 attention_layer_kwargs={"feature_size": 64, "heads": 2},
             )
             self.feature_extract = HighwayNotifierFeaturesExtractor(args, np.array(single_observation_space.shape).prod(), **attention_network_kwargs)
+        elif args.env_id == "steakhouse":
+            # Initialize steakhouse feature extractor
+            self.feature_extract = SteakhouseNotifierFeaturesExtractor(
+                args, 
+                np.array(single_observation_space.shape).prod(), 
+                features_dim=128
+            )
 
         hidden_dim = 64
         if len(single_action_space.nvec) == 4:
@@ -108,12 +118,12 @@ class NotifierMLPAgent(MLPAgent):
             self.react_head = nn.Linear(hidden_dim, self.react_dim)
 
     def get_value(self, x):
-        if self.feature_extractor == "highway":
+        if self.feature_extractor == "highway" or self.args.env_id == "steakhouse":
             x = self.feature_extract(x)
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
-        if self.feature_extractor == "highway":
+        if self.feature_extractor == "highway" or self.args.env_id == "steakhouse":
             x = self.feature_extract(x)
         features = self.notifier(x)
 

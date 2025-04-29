@@ -51,14 +51,15 @@ class BaseTrainer:
         action_length_data.sort(key=lambda x: x[0])
 
         # Create a combined line plot for all action lengths
-        wandb.log({
-            "eval/action_length_counts": wandb.plot.line_series(
-                xs=[global_step] * len(action_length_data),
-                ys=[[d[1]] for d in action_length_data],
-                keys=[f"Length {d[0]}" for d in action_length_data],
-                title="Action Length Counts Over Time"
-            )
-        }, step=global_step)
+        if len(action_length_data) > 0:
+            wandb.log({
+                "eval/action_length_counts": wandb.plot.line_series(
+                    xs=[global_step] * len(action_length_data),
+                    ys=[[d[1]] for d in action_length_data],
+                    keys=[f"Length {d[0]}" for d in action_length_data],
+                    title="Action Length Counts Over Time"
+                )
+            }, step=global_step)
 
     def train(self):
         # TRY NOT TO MODIFY: seeding

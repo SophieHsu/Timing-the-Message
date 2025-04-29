@@ -24,6 +24,7 @@ class Args:
     env_id: str = "steakhouse" # "DangerZoneLunarLander" #"multi-merge-v0" "LargeRewardNotiLunarLander" "complex-noti-multi-merge-v0" "simple-noti-multi-merge-v0"
     total_timesteps: int = int(1e9)
     highway_features_dim: int = 64
+    steakhouse_feature_dim: int = 128
     max_episode_steps: int = 30
     # Agent settings
     agent_type: str = "lstm"  # Options: "mlp", "lstm", "transformer", "heuristic"
@@ -76,12 +77,14 @@ class Args:
     mlp_hidden_dims: list = None
 
     # Feature extractor settings
-    feature_extractor: str = "none" # Options: "highway", "none"
+    feature_extractor: str = "steakhouse" # Options: "highway", "none", "steakhouse"
     num_vehicles: int = 8
     def __post_init__(self):
         if self.mlp_hidden_dims is None:
             self.mlp_hidden_dims = [64, 64] 
-
+        # Set feature extractor to "steakhouse" if env_id is "steakhouse"
+        if self.env_id == "steakhouse":
+            self.feature_extractor = "steakhouse"
 
     # Steakhouse specific settings
     layout_name: str = "small"

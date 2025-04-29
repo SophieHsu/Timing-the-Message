@@ -49,7 +49,7 @@ class BaseRolloutCollector:
         self.dones = torch.zeros((self.args.num_steps, self.num_envs)).to(self.device) 
         self.values = torch.zeros((self.args.num_steps, self.num_envs)).to(self.device)
 
-    def compute_next_agent_obs(self, next_obs, infos, num_envs=None):
+    def compute_next_agent_obs(self, next_obs, infos, num_envs=None, prev_agent_obs=None):
         num_envs = num_envs if num_envs is not None else self.num_envs
         if self.human_agent is not None:
             if self.args.agent_obs_mode == "history":
@@ -60,7 +60,7 @@ class BaseRolloutCollector:
                 # Concatenate along the feature dimension
                 curr_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
                 # Get previous observations
-                prev_agent_obs = self.full_next_agent_obs[-1].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+                prev_agent_obs = self.full_next_agent_obs[-1].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:] if prev_agent_obs is None else prev_agent_obs
                 # Concatenate with current observation
                 next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(num_envs, -1)
             else:
@@ -618,7 +618,7 @@ class CookingLSTMRolloutWorker:
         self.device = self.args.device
         self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization)
         self.env.reset(rand_start=self.args.rand_start)
-        self.single_observation_space = tuple(list(self.env.mdp.shape) + [34])
+        self.single_observation_space = tuple(list(self.env.mdp.shape) + [26])
         self.single_action_space_n = self.env.single_action_space
         self.agent = None  # will be set via set_agent
         self.mlam = SteakMediumLevelActionManager.from_pickle_or_compute(
@@ -744,7 +744,8 @@ class CookingLSTMRolloutWorker:
             with torch.no_grad():
                 infos = info
                 infos["utterance"] = info["utterance"].reshape(self.num_envs, -1)
-                next_agent_obs = self.compute_next_agent_obs(next_obs, infos, num_envs=1)
+                prev_agent_obs = full_next_agent_obs[-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+                next_agent_obs = self.compute_next_agent_obs(next_obs, infos, num_envs=1, prev_agent_obs=prev_agent_obs)
                 action, logprob, _, value, next_lstm_state = self.agent.notifier_model.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
                 values[step] = value.flatten()
             actions[step] = action
