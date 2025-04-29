@@ -313,24 +313,31 @@ class LSTMTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                    f"{wandb.run.dir}/agent.pt",
-                    make_env,
-                    eval_episodes=3,
-                    model=self.agent.__class__,
-                    device="cpu",
-                    capture_video=True,
-                )
+                for fixed_objects_start_state_mode in range(3):
+                    try:
+                        episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
+                            f"{wandb.run.dir}/agent.pt",
+                            make_env,
+                            eval_episodes=3,
+                            model=self.agent.__class__,
+                            device="cpu",
+                            capture_video=True,
+                            use_random_start_state=True,
+                            fixed_objects_start_state_mode=fixed_objects_start_state_mode,
+                        )
 
-                if os.path.exists(f"videos/{self.run_name}"):
-                    for video_file in os.listdir(f"videos/{self.run_name}"):
-                        if video_file.endswith(".mp4"):
-                            wandb.log({
-                                f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{video_file}")
-                            }, step=global_step)
-                
-                # Log evaluation metrics using the helper function
-                self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
+                        if os.path.exists(f"videos/{self.run_name}"):
+                            for video_file in os.listdir(f"videos/{self.run_name}"):
+                                if video_file.endswith(".mp4"):
+                                    wandb.log({
+                                        f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{fixed_objects_start_state_mode}")
+                                    }, step=global_step)
+                        
+                        # Log evaluation metrics using the helper function
+                        self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
+                    except Exception as e:
+                        print(e)
+                        pass
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)

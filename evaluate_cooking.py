@@ -54,7 +54,7 @@ def main():
     args = Args()
     
     # Update Args with command line arguments
-    args.model_path = cli_args.model_path
+    args.model_path = None # cli_args.model_path
     # args.layout_name = cli_args.layout_name
     # args.max_episode_steps = cli_args.max_episode_steps
     # args.device = cli_args.device

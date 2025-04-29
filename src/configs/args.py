@@ -18,9 +18,9 @@ class Args:
     model_path: str = None  # Path to the trained agent model
     model_run_id: str = "sgeo696n" # 03cwsek5
     ray_debug_mode: bool = True  # Run in debug mode with simplified data and CPU
-    render: bool = True  # Whether to render locally (True) or in headless mode (False)
+    render: bool = False  # Whether to render locally (True) or in headless mode (False)
     # Environment settings
-    headless: bool = False
+    headless: bool = True
     env_id: str = "steakhouse" # "DangerZoneLunarLander" #"multi-merge-v0" "LargeRewardNotiLunarLander" "complex-noti-multi-merge-v0" "simple-noti-multi-merge-v0"
     total_timesteps: int = int(1e9)
     highway_features_dim: int = 64

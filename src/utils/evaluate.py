@@ -921,17 +921,15 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         
         # Configure random start state if requested
         if use_random_start_state:
-            random_start_state_fn = world_mdp.get_random_objects_start_state_fn(
-                random_start_pos=random_start_pos,
-                rnd_obj_prob_thresh=rnd_obj_prob_thresh
-            )
-            # Set the start state function in the MDP
-            # world_mdp.start_state_fn = random_start_state_fn
-        else:
             if fixed_objects_start_state_mode == 1:
                 random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn1()
             elif fixed_objects_start_state_mode == 2:
                 random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn2()
+            else:
+                random_start_state_fn = world_mdp.get_random_objects_start_state_fn(
+                    random_start_pos=random_start_pos,
+                    rnd_obj_prob_thresh=rnd_obj_prob_thresh
+                )
 
         mlam = self.SteakMediumLevelActionManager.from_pickle_or_compute(
                 world_mdp,
@@ -989,7 +987,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         agent2.init_knowledge_base(env.state)
         agent2.set_mdp(env.mdp)
 
-        self.args.log_file_name = f"{self.run_name}"
+        self.args.log_file_name = f"{fixed_objects_start_state_mode}"
         self.args.record_video = capture_video
         self.args.total_time = self.args.max_episode_steps
         study_config = self.StudyConfig(self.args, self.args.layout_name)

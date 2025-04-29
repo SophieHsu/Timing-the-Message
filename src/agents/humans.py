@@ -254,8 +254,67 @@ class HumanChefAgent(HumanAgent):
             vision_mode="grid",
             kb_update_delay=0,
             kb_ackn_prob=False,
-            debug=True,
+            debug=False,
         )
+
+    def process_utterance(self, utterance):
+        # Update utterance memory with the new utterance
+        self.utterance_memory = np.concatenate([self.utterance_memory[:,1:], utterance.reshape(self.num_envs, 1, self.noti_action_length)], axis=1)
+
+        # Initialize arrays for vectorized processing
+        num_envs = self.utterance_memory.shape[0]
+        track_lengths = np.zeros(num_envs, dtype=int)
+        track_noti_actions = np.array([None] * num_envs)
+        track_noti_action_lengths = np.zeros(num_envs, dtype=int)
+        track_noti_action_reaction_lengths = np.zeros(num_envs, dtype=int)
+        # Process all environments at once
+        # We'll iterate through the utterance memory in reverse order
+        is_done = np.zeros(num_envs, dtype=bool)
+        for i in range(self.utterance_memory.shape[1] - 1, -1, -1):
+            # Get all utterances at the current position across all environments
+            current_utters = self.utterance_memory[:, i]
+            
+            # Create masks for different utterance types
+            is_continue_one = np.array([tuple(utter) == tuple([1]+[0]*(self.noti_action_length-1)) for utter in current_utters])
+            is_zero = np.array([tuple(utter) == tuple([0]*self.noti_action_length) for utter in current_utters])
+            is_other = ~(is_continue_one | is_zero) & ~is_done
+            is_track = is_continue_one & ~is_done
+            is_done[is_zero] = True
+            
+            # Process negative one utterances
+            track_lengths[is_track] += 1
+            
+            # Process other utterances
+            for env_idx in np.where(is_other)[0]:
+                utter = current_utters[env_idx]
+                if track_noti_actions[env_idx] is None:
+                    track_lengths[env_idx] += 1
+                    tmp_utter = tuple(utter)
+                    track_noti_actions[env_idx], track_noti_action_lengths[env_idx] = tmp_utter[1], tmp_utter[2]
+                    track_noti_action_reaction_lengths[env_idx] = 2
+                    if not self.args.human_comprehend_bool:
+                        track_noti_action_lengths[env_idx] = 1
+                    is_done[env_idx] = True
+                else:
+                    is_done[env_idx] = True
+
+            # update overwrite action to indicate to update knowledge directly once the full length (>=5) is reached
+            if self.args.human_comprehend_bool:
+                valid_update_overwrite_lengths = np.where((track_noti_action_reaction_lengths != track_noti_action_lengths) & (track_lengths == track_noti_action_lengths))[0]
+                self.overwrite_length[valid_update_overwrite_lengths] = 3
+                self.overwrite_action[valid_update_overwrite_lengths] = 4 # indicating to update knowledge directly
+
+            valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]
+            self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
+            if not self.args.fix_overwrite:
+                self.tmp_overwrite_length[valid_lengths] = (track_noti_action_reaction_lengths[valid_lengths]-2)*2 + 2 # 5length = 8overwrite, 2length = 2overwrite
+
+            self.track_reaction_delay[valid_lengths] = 1
+            is_done[valid_lengths] = True
+            
+            # Break early if all environments have been processed
+            if np.all(is_done):
+                break
 
     def get_action(self, env_state, utterance):
         action, _ = self.steakhouse_planner.action(env_state)
@@ -272,11 +331,12 @@ class HumanChefAgent(HumanAgent):
             if overwrite_action < 4:
                 action = Action.INDEX_TO_ACTION[overwrite_action]
             else:
-                print(env_state)
                 self.steakhouse_planner.init_knowledge_base(env_state)
                 action, _ = self.steakhouse_planner.action(env_state, vision_bound=0)
 
         current_overwrite_flag = np.array((self.overwrite_action != -1) & (self.track_overwrite > 0), dtype=np.int32)
+        if self.overwrite_action[0] == 4:
+            current_overwrite_flag[0] = 2
         
         self.update_reaction_delay_tracking()
         
