@@ -19,5 +19,6 @@ dependencies = [
   "tyro",
   "numpy",
   "moviepy",
-  "highway_env"
+  "highway_env",
+  "stable_baselines3"
 ]

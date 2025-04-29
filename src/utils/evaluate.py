@@ -914,6 +914,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         use_random_start_state: bool = True,
         random_start_pos: bool = True,
         rnd_obj_prob_thresh: float = 0.5,
+        fixed_objects_start_state_mode: int = 0,
     ):
         layout_name = self.args.layout_name
         world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
@@ -925,8 +926,13 @@ class CookingLSTMEvaluator(LSTMEvaluator):
                 rnd_obj_prob_thresh=rnd_obj_prob_thresh
             )
             # Set the start state function in the MDP
-            world_mdp.start_state_fn = random_start_state_fn
-        
+            # world_mdp.start_state_fn = random_start_state_fn
+        else:
+            if fixed_objects_start_state_mode == 1:
+                random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn1()
+            elif fixed_objects_start_state_mode == 2:
+                random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn2()
+
         mlam = self.SteakMediumLevelActionManager.from_pickle_or_compute(
                 world_mdp,
                 {
@@ -942,7 +948,10 @@ class CookingLSTMEvaluator(LSTMEvaluator):
                 force_compute=False,
                 info=False,
             )
-        env = self.CommsSteakhouseEnv.from_mdp(world_mdp, start_state_fn=world_mdp.start_state_fn, horizon=self.args.max_episode_steps, mlam=mlam, discretization=self.args.discretization)
+        env = self.CommsSteakhouseEnv.from_mdp(world_mdp, start_state_fn=random_start_state_fn, horizon=self.args.max_episode_steps, mlam=mlam, discretization=self.args.discretization)
+
+        self.args.noti_action_length = env.noti_action_length
+        
         COUNTERS_PARAMS = {
             'start_orientations': True,
             'wait_allowed': True,
@@ -969,7 +978,8 @@ class CookingLSTMEvaluator(LSTMEvaluator):
             single_observation_space=env.single_observation_space,
             single_action_space=env.single_action_space,
         )
-        notifier_model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        if model_path is not None:
+            notifier_model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         notifier_model.eval()
         notifier_model.to(self.device)
 

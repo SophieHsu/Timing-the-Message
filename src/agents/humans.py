@@ -247,14 +247,14 @@ class HumanChefAgent(HumanAgent):
         self.steakhouse_planner = SteakLimitVisionHumanModel(
             mlam=envs.mlam,
             start_state=envs.state,
-            auto_unstuck=True,
-            explore=args.EXPLORE,
-            vision_limit=args.VISION_LIMIT,
-            vision_bound=args.VISION_BOUND,
-            vision_mode=args.VISION_MODE,
-            kb_update_delay=args.KB_UPDATE_DELAY,
-            kb_ackn_prob=args.KB_ACKN_PROB,
-            debug=False,
+            auto_unstuck=False,
+            explore=False,
+            vision_limit=True,
+            vision_bound=120,
+            vision_mode="grid",
+            kb_update_delay=0,
+            kb_ackn_prob=False,
+            debug=True,
         )
 
     def get_action(self, env_state, utterance):
