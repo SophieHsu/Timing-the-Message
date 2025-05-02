@@ -330,7 +330,7 @@ class LSTMTrainer(BaseTrainer):
                             for video_file in os.listdir(f"videos/{self.run_name}"):
                                 if video_file.endswith(".mp4"):
                                     wandb.log({
-                                        f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{fixed_objects_start_state_mode}")
+                                        f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{fixed_objects_start_state_mode}.mp4")
                                     }, step=global_step)
                         
                         # Log evaluation metrics using the helper function

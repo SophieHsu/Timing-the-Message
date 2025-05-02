@@ -90,6 +90,11 @@ class NotifierMLPAgent(MLPAgent):
             self.feature_extract = HighwayNotifierFeaturesExtractor(args, np.array(single_observation_space.shape).prod(), **attention_network_kwargs)
         elif args.env_id == "steakhouse":
             # Initialize steakhouse feature extractor
+            attention_network_kwargs = dict(
+                in_size=7*8*23,
+                embedding_layer_kwargs={"in_size": 23, "layer_sizes": [128, 128], "reshape": False},
+                attention_layer_kwargs={"feature_size": 128, "heads": 2},
+            )
             self.feature_extract = SteakhouseNotifierFeaturesExtractor(
                 args, 
                 np.array(single_observation_space.shape).prod(), 

@@ -254,6 +254,7 @@ class HumanChefAgent(HumanAgent):
             vision_mode="grid",
             kb_update_delay=0,
             kb_ackn_prob=False,
+            drop_on_counter=True,
             debug=False,
         )
 
@@ -301,7 +302,8 @@ class HumanChefAgent(HumanAgent):
             # update overwrite action to indicate to update knowledge directly once the full length (>=5) is reached
             if self.args.human_comprehend_bool:
                 valid_update_overwrite_lengths = np.where((track_noti_action_reaction_lengths != track_noti_action_lengths) & (track_lengths == track_noti_action_lengths))[0]
-                self.overwrite_length[valid_update_overwrite_lengths] = 3
+                self.track_overwrite[valid_update_overwrite_lengths] = 1
+                self.overwrite_length[valid_update_overwrite_lengths] = 2
                 self.overwrite_action[valid_update_overwrite_lengths] = 4 # indicating to update knowledge directly
 
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]

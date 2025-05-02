@@ -18,6 +18,8 @@ class Args:
     model_path: str = None  # Path to the trained agent model
     model_run_id: str = "sgeo696n" # 03cwsek5
     ray_debug_mode: bool = True  # Run in debug mode with simplified data and CPU
+    num_cpus: int = 8
+    num_gpus: int = 1
     render: bool = False  # Whether to render locally (True) or in headless mode (False)
     # Environment settings
     headless: bool = True
@@ -35,7 +37,7 @@ class Args:
     rollout_reward_buffer_steps: int = 5
     save_trajectory: bool = False
     random_danger_zone: bool = False
-
+    noti_penalty_weight: float = 1.0
     # Human agent settings
     human_agent_type: str = "chef" # Options: "None", "mlp", "lstm", "transformer", "IDM", "chef"
     human_agent_run_id: str = "xlq34dpt"

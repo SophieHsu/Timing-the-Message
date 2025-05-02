@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import ray
 import math
+import time
 from steakhouse_ai_py.mdp.steakhouse_env import CommsSteakhouseEnv
 from steakhouse_ai_py.mdp.steakhouse_mdp import SteakhouseGridworld
 from steakhouse_ai_py.planners.steak_planner import SteakMediumLevelActionManager
@@ -607,12 +608,11 @@ def conditional_ray_remote(debug_mode):
 
 @conditional_ray_remote(_ray_debug_mode)
 class CookingLSTMRolloutWorker:
-    def __init__(self, args, compute_next_agent_obs=None, ray_debug_mode=False, writer=None):
+    def __init__(self, args, ray_debug_mode=False, writer=None):
         self.layout_name = args.layout_name
         self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
         self.args = args
         self.num_envs = 1
-        self.compute_next_agent_obs = compute_next_agent_obs
         self.ray_debug_mode = ray_debug_mode
 
         self.device = self.args.device
@@ -624,7 +624,7 @@ class CookingLSTMRolloutWorker:
         
         self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization, random_start_state_fn=random_start_state_fn)
         self.env.reset(rand_start=self.args.rand_start)
-        self.single_observation_space = tuple(list(self.env.mdp.shape) + [26])
+        self.single_observation_space = tuple(list(self.env.mdp.shape) + [23])
         self.single_action_space_n = self.env.single_action_space
         self.agent = None  # will be set via set_agent
         self.mlam = SteakMediumLevelActionManager.from_pickle_or_compute(
@@ -761,10 +761,12 @@ class CookingLSTMRolloutWorker:
             # TRY NOT TO MODIFY: execute the game and log data.
             human_action, overwrite_flag = self.human_agent.get_action(self.env.state, infos['utterance'])
             full_actions = [action.cpu().numpy()[0], human_action, overwrite_flag]
-
+            _, _ = self.agent.action(self.env.state)
             next_state, reward, next_done, info = self.env.step(full_actions)
             next_obs = self.agent.get_obs(next_state)
-            # reward -= 0.1
+            reward -= 0.1
+            noti_penalty = self.agent.notification_reward(next_state)
+            reward += noti_penalty * args.noti_penalty_weight
             # if info["utterance"][0] == 2:
             #     reward -= 0.01
             reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
@@ -807,6 +809,28 @@ class CookingLSTMRolloutWorker:
             "next_lstm_state": next_lstm_state,
         }
 
+    def compute_next_agent_obs(self, next_obs, infos, num_envs=None, prev_agent_obs=None):
+        num_envs = num_envs if num_envs is not None else self.num_envs
+        if self.human_agent is not None:
+            if self.args.agent_obs_mode == "history":
+                # Reshape next_obs to match the expected dimensions
+                next_obs_reshaped = next_obs.reshape(num_envs, -1)
+                # Convert utterance to tensor and reshape
+                utterance_tensor = torch.Tensor(infos['utterance']).to(self.device)
+                # Concatenate along the feature dimension
+                curr_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
+                # Get previous observations
+                prev_agent_obs = self.full_next_agent_obs[-1].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:] if prev_agent_obs is None else prev_agent_obs
+                # Concatenate with current observation
+                next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(num_envs, -1)
+            else:
+                # For non-history mode, just concatenate along the feature dimension
+                next_obs_reshaped = next_obs.reshape(num_envs, -1)
+                utterance_tensor = torch.Tensor(infos['utterance']).to(self.device)
+                next_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
+        else:
+            next_agent_obs = next_obs
+        return next_agent_obs
 
 class CookingLSTMRolloutCollector(LSTMRolloutCollector):
     def __init__(self, args, agent, envs, writer, device, human_agent, agent_single_action_space, ray_debug_mode=False):
@@ -819,10 +843,10 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
         
         if not self.ray_debug_mode:
             # Create a worker pool with num_envs workers
-            self.workers = [CookingLSTMRolloutWorker.remote(self.args, self.compute_next_agent_obs, ray_debug_mode=ray_debug_mode, writer=self.writer) for _ in range(self.num_envs)]
+            self.workers = [CookingLSTMRolloutWorker.remote(self.args, ray_debug_mode=ray_debug_mode) for _ in range(self.args.num_envs)]
         else:
             # In debug mode, create local worker instances
-            self.workers = [CookingLSTMRolloutWorker(self.args, self.compute_next_agent_obs, ray_debug_mode=ray_debug_mode, writer=self.writer) for _ in range(self.args.num_envs)]
+            self.workers = [CookingLSTMRolloutWorker(self.args, ray_debug_mode=ray_debug_mode, writer=self.writer) for _ in range(self.args.num_envs)]
         
         # Track the last agent state to avoid unnecessary updates
         self.last_agent_state_hash = None
@@ -888,7 +912,7 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
                         if retries >= self.max_retries:
                             print(f"Worker {i} failed after {retries} retries: {e}")
                             # Create a new worker to replace the failed one
-                            self.workers[i] = CookingLSTMRolloutWorker.remote(self.args, self.compute_next_agent_obs, ray_debug_mode=self.ray_debug_mode)
+                            self.workers[i] = CookingLSTMRolloutWorker.remote(self.args, ray_debug_mode=self.ray_debug_mode)
                             # Update the new worker with the current agent state
                             self._update_workers(agent_state_dict)
                             # Try one more time with the new worker
@@ -944,7 +968,7 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
         """Run a single rollout locally as a fallback."""
         # This is a simplified version that runs a single rollout
         # In a real implementation, you would want to make this more robust
-        worker = CookingLSTMRolloutWorker(self.args, self.compute_next_agent_obs, self.ray_debug_mode)
+        worker = CookingLSTMRolloutWorker(self.args, self.ray_debug_mode)
         agent_state_dict = {k: v.cpu().clone() for k, v in self.agent.state_dict().items()}
         worker.set_agent(agent_state_dict)
         return worker.rollout(global_step, initial_lstm_state)
