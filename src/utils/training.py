@@ -210,6 +210,15 @@ class LSTMTrainer(BaseTrainer):
 
         # Initialize optimizer
         optimizer = optim.Adam(self.agent.parameters(), lr=self.args.learning_rate, eps=1e-5)
+        if self.args.model_run_id is not None:
+            api = wandb.Api()
+            run = api.run(f"{self.args.wandb_entity}/timing/{self.args.model_run_id}")
+            model_path = run.config['filepath'] + "/optimizer.pt"
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Optimizer file not found: {model_path}")
+            else:
+                optimizer.load_state_dict(torch.load(model_path, map_location=self.device))
+                print(f"Loaded optimizer from {model_path}")
 
         global_step = 0
         start_time = time.time()
@@ -227,9 +236,8 @@ class LSTMTrainer(BaseTrainer):
                 lrnow = frac * self.args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
             
-            results = self.rollout_collector.collect_rollouts(global_step, initial_lstm_state)
+            results = self.rollout_collector.collect_rollouts(global_step, next_lstm_state)
             global_step = results["global_step"]
-            initial_lstm_state = results["initial_lstm_state"]
             next_lstm_state = results["next_lstm_state"]
             
             # flatten the batch
@@ -313,14 +321,14 @@ class LSTMTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                for fixed_objects_start_state_mode in range(3):
+                for fixed_objects_start_state_mode in range(0,3):
                     try:
                         episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                             f"{wandb.run.dir}/agent.pt",
                             make_env,
                             eval_episodes=3,
                             model=self.agent.__class__,
-                            device="cpu",
+                            device="cpu" if not torch.cuda.is_available() else "cuda",
                             capture_video=True,
                             use_random_start_state=True,
                             fixed_objects_start_state_mode=fixed_objects_start_state_mode,

@@ -24,9 +24,10 @@ class HumanAgent:
             human_agent_path = "/home/sophie.hsu.pi/Timing-the-Message/wandb/run-20250409_201211-xlq34dpt/files/agent.pt"
         
             if args.human_agent_type == "mlp":
-                self.policy_network = MLPAgent(envs, args).to(self.device)
+                print(envs.single_observation_space)
+                self.policy_network = MLPAgent(args, envs.single_observation_space).to(self.device)
             elif args.human_agent_type == "lstm":
-                self.policy_network = LSTMAgent(envs, args).to(self.device)
+                self.policy_network = LSTMAgent(args, envs.single_observation_space).to(self.device)
             elif args.human_agent_type == "transformer":
                 self.policy_network = TransformerAgent(envs, args).to(self.device)
             else:
@@ -254,7 +255,7 @@ class HumanChefAgent(HumanAgent):
             vision_mode="grid",
             kb_update_delay=0,
             kb_ackn_prob=False,
-            drop_on_counter=True,
+            drop_on_counter=self.args.drop_on_counter,
             debug=False,
         )
 

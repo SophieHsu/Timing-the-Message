@@ -62,12 +62,23 @@ class AgentFactory:
     def create_notifier_agent(args: Args, envs: SyncVectorEnv, device: torch.device) -> Union[NotifierMLPAgent, NotifierLSTMAgent]:
         """Create a notifier agent based on the specified type."""
         if args.agent_type == "mlp":
-            return NotifierMLPAgent(args, envs.single_observation_space, envs.single_action_space, args.noti_action_length).to(device)
+            agent = NotifierMLPAgent(args, envs.single_observation_space, envs.single_action_space, args.noti_action_length).to(device)
         elif args.agent_type == "lstm":
-            return NotifierLSTMAgent(args, envs.single_observation_space, envs.single_action_space).to(device)
+            agent = NotifierLSTMAgent(args, envs.single_observation_space, envs.single_action_space).to(device)
         else:
             raise ValueError(f"Unknown notifier agent type: {args.agent_type}")
-
+        
+        if args.model_run_id is not None:
+            api = wandb.Api()
+            run = api.run(f"{args.wandb_entity}/timing/{args.model_run_id}")
+            model_path = run.config['filepath'] + "/agent.pt"
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            else:
+                agent.load_state_dict(torch.load(model_path, map_location=device))
+                print(f"Loaded notifier agent from {model_path}")
+        return agent
+    
 class HumanAgentFactory:
     """Factory class for creating different types of human agents."""
     

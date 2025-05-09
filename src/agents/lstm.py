@@ -15,6 +15,7 @@ class LSTMAgent(nn.Module):
     def __init__(self, args, single_observation_space=None, single_action_space=None):
         super().__init__()
         self.lstm_size = args.lstm_size
+        self.lstm_hidden_dim = args.lstm_hidden_dim
         single_observation_space = single_observation_space.shape[0] if single_observation_space is None else single_observation_space
         self.network = nn.Sequential(
             layer_init(nn.Linear(single_observation_space, 128)),
@@ -24,14 +25,14 @@ class LSTMAgent(nn.Module):
             layer_init(nn.Linear(32, self.lstm_size)),
             nn.ReLU(),
         )
-        self.lstm = nn.LSTM(self.lstm_size, 128)
+        self.lstm = nn.LSTM(self.lstm_size, self.lstm_hidden_dim)
         for name, param in self.lstm.named_parameters():
             if "bias" in name:
                 nn.init.constant_(param, 0)
             elif "weight" in name:
                 nn.init.orthogonal_(param, 1)
-        self.actor = layer_init(nn.Linear(128, single_action_space[-1].n), std=0.01)
-        self.critic = layer_init(nn.Linear(128, 1), std=1)
+        self.actor = layer_init(nn.Linear(self.lstm_hidden_dim, single_action_space[-1].n), std=0.01)
+        self.critic = layer_init(nn.Linear(self.lstm_hidden_dim, 1), std=1)
 
     def get_states(self, x, lstm_state, done):
         hidden = self.network(x)
@@ -75,15 +76,20 @@ class NotifierLSTMAgent(LSTMAgent):
         self.human_utterance_memory_length = args.human_utterance_memory_length
         self.agent_obs_mode = args.agent_obs_mode
         flatten_observation_space = np.array(single_observation_space).prod() if isinstance(single_observation_space, tuple) else np.array(single_observation_space.shape).prod()
+        
+        if self.args.env_id == "steakhouse" and self.args.one_dim_obs:
+            flatten_observation_space = 13 
 
         if self.agent_obs_mode == "history":
             self.single_observation_space = (flatten_observation_space + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
         else:
             self.single_observation_space = flatten_observation_space + (single_action_space.shape[0]-1)
 
-        if self.args.env_id == "steakhouse" and self.agent_obs_mode == "history":
+        input_dim = self.single_observation_space
+
+        if self.args.env_id == "steakhouse" and self.agent_obs_mode == "history" and not self.args.one_dim_obs:
             input_dim = (args.steakhouse_feature_dim + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
-        elif self.args.env_id == "steakhouse":
+        elif self.args.env_id == "steakhouse" and not self.args.one_dim_obs:
             input_dim = (args.steakhouse_feature_dim + (single_action_space.shape[0]-1))
 
         super().__init__(args, input_dim, single_action_space)
@@ -104,7 +110,7 @@ class NotifierLSTMAgent(LSTMAgent):
             self.react_head = nn.Linear(128, self.react_dim)
             
         # Initialize feature extractor for steakhouse environment
-        if args.env_id == "steakhouse":
+        if args.env_id == "steakhouse" and not args.one_dim_obs:
             attention_network_kwargs = dict(
                 in_size=7*8*23,
                 embedding_layer_kwargs={"in_size": 7*8, "layer_sizes": [128, 128], "reshape": False},
@@ -118,7 +124,7 @@ class NotifierLSTMAgent(LSTMAgent):
             )
     
     def get_value(self, x, lstm_state, done):
-        if self.args.env_id == "steakhouse":
+        if self.args.env_id == "steakhouse" and not self.args.one_dim_obs:
             # Process through steakhouse feature extractor
             x = self.feature_extractor(x)
         hidden, _ = self.get_states(x, lstm_state, done)
@@ -126,7 +132,7 @@ class NotifierLSTMAgent(LSTMAgent):
 
 
     def get_action_and_value(self, x, lstm_state, done, action=None):
-        if self.args.env_id == "steakhouse":
+        if self.args.env_id == "steakhouse" and not self.args.one_dim_obs:
             # Process through steakhouse feature extractor
             x = self.feature_extractor(x)
         

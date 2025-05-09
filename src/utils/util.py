@@ -5,7 +5,7 @@ import gymnasium as gym
 from steakhouse_ai_py.mdp.steakhouse_mdp import SteakhouseGridworld
 from steakhouse_ai_py.mdp.steakhouse_env import CommsSteakhouseEnv
 from steakhouse_ai_py.planners.steak_planner import SteakMediumLevelActionManager
-from configs.args import Args
+from src.configs.args import Args
 
 def make_env(env_id, idx, capture_video, run_name, args=None):
     def thunk():

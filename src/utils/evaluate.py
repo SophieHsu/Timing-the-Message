@@ -3,10 +3,8 @@ import gymnasium as gym
 import numpy as np
 from typing import Callable
 import os
-import cv2
-import pygame
 from pathlib import Path
-import time
+import random
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -172,7 +170,7 @@ class BaseEvaluator:
         self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
         self.next_agent_obs = torch.zeros((self.args.max_episode_steps, self.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*10, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*self.args.human_utterance_memory_length, self.num_envs) + (agent.single_observation_space,)).to(device)
 
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
@@ -315,7 +313,7 @@ class LSTMEvaluator(BaseEvaluator):
         self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
         self.next_agent_obs = torch.zeros((600, self.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*self.args.human_utterance_memory_length, self.num_envs) + (agent.single_observation_space,)).to(device)
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
             human_agent = HumanAgent(envs, self.args, device)
@@ -637,7 +635,7 @@ class BaseBlockingEvaluator(BaseEvaluator):
         self.num_envs = 1 # Override num_envs to 1 for evaluation
         self.args.device = device
         self.next_agent_obs = torch.zeros((600, self.num_envs) + (agent.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (agent.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*self.args.human_utterance_memory_length, self.num_envs) + (agent.single_observation_space,)).to(device)
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
             human_agent = HumanAgent(envs, self.args, device)
@@ -768,7 +766,7 @@ class HeuristicEvaluator(BaseEvaluator):
         self.args.device = device
         self.single_observation_space = (np.array(envs.single_observation_space.shape).prod() + (envs.single_action_space.shape[0]-1))*self.args.human_utterance_memory_length
         self.next_agent_obs = torch.zeros((600, self.num_envs) + (self.single_observation_space,)).to(device)
-        self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (self.single_observation_space,)).to(device)
+        self.full_next_agent_obs = torch.zeros((600*self.args.human_utterance_memory_length, self.num_envs) + (self.single_observation_space,)).to(device)
         self.args.device = device
         human_agent = HumanAgent(envs, self.args, device)
 
@@ -865,7 +863,7 @@ class HeuristicEvaluator(BaseEvaluator):
                     human_agent.reset()
 
                 self.next_agent_obs = torch.zeros((600, self.num_envs) + (self.single_observation_space,)).to(device)
-                self.full_next_agent_obs = torch.zeros((600*10, self.num_envs) + (self.single_observation_space,)).to(device)
+                self.full_next_agent_obs = torch.zeros((600*self.args.human_utterance_memory_length, self.num_envs) + (self.single_observation_space,)).to(device)
             else:
                 step += 1
             
@@ -883,6 +881,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         from steakhouse_ai_py.mdp.steakhouse_mdp import SteakhouseGridworld
         from steakhouse_ai_py.planners.steak_planner import SteakMediumLevelActionManager
         from steakhouse_ai_py.agents.notifier_agent import LangStayAgent
+        from steakhouse_ai_py.agents.steak_agent import SteakLimitVisionHumanModel
         from src.agents.humans import HumanChefAgent
         from src.agents.lstm import NotifierLSTMAgent
         from steakhouse_ai.src.utils import Logger, StudyConfig, initialize_config_from_args, LangOvercookedPygame
@@ -891,6 +890,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         self.CommsSteakhouseEnv = CommsSteakhouseEnv
         self.SteakhouseGridworld = SteakhouseGridworld
         self.SteakMediumLevelActionManager = SteakMediumLevelActionManager
+        self.SteakLimitVisionHumanModel = SteakLimitVisionHumanModel
         self.LangStayAgent = LangStayAgent
         self.HumanChefAgent = HumanChefAgent
         self.NotifierLSTMAgent = NotifierLSTMAgent
@@ -916,16 +916,24 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         rnd_obj_prob_thresh: float = 0.5,
         fixed_objects_start_state_mode: int = 0,
     ):
-        layout_name = self.args.layout_name
-        world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
-        
         # Configure random start state if requested
         if use_random_start_state:
             if fixed_objects_start_state_mode == 1:
+                layout_name = self.args.layout_name
+                world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
                 random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn1()
+
             elif fixed_objects_start_state_mode == 2:
+                layout_name = self.args.layout_name
+                world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
                 random_start_state_fn = world_mdp.get_fixed_objects_start_state_fn2()
+
             else:
+                if self.args.layout_random:
+                    layout_name = self.args.layout_name + str(random.randint(1,5))
+                else:
+                    layout_name = self.args.layout_name
+                world_mdp = self.SteakhouseGridworld.from_layout_name(layout_name)
                 random_start_state_fn = world_mdp.get_random_objects_start_state_fn(
                     random_start_pos=random_start_pos,
                     rnd_obj_prob_thresh=rnd_obj_prob_thresh
@@ -977,15 +985,21 @@ class CookingLSTMEvaluator(LSTMEvaluator):
             single_action_space=env.single_action_space,
         )
         if model_path is not None:
-            notifier_model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+            notifier_model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         notifier_model.eval()
-        notifier_model.to(self.device)
+        notifier_model.to(device)
 
         # agent2 = SteakGreedyHumanModel(mlam)
-        agent2 = self.LangStayAgent(mlam, env.state, notifier_model=notifier_model, auto_unstuck=True, explore=self.args.EXPLORE, vision_limit=self.args.VISION_LIMIT, vision_bound=360, kb_update_delay=1, kb_ackn_prob=False, debug=False)
+        agent2 = self.LangStayAgent(mlam, env.state, notifier_model=notifier_model, auto_unstuck=True, explore=self.args.EXPLORE, vision_limit=self.args.VISION_LIMIT, vision_bound=360, kb_update_delay=1, kb_ackn_prob=False, one_dim_obs=self.args.one_dim_obs, drop_on_counter=True, debug=self.args.debug) # always assume drop on counter to compute the optimal human action
         agent2.set_agent_index(1)
         agent2.init_knowledge_base(env.state)
         agent2.set_mdp(env.mdp)
+
+        agent2.human_model = self.SteakLimitVisionHumanModel(mlam, env.state, vision_limit=True, vision_mode="grid", vision_bound=120, kb_update_delay=0, kb_ackn_prob=False, drop_on_counter=True)
+        agent2.human_model.set_agent_index(0)
+        agent2.human_model.init_knowledge_base(world_mdp.get_standard_start_state())
+        agent2.human_model.set_mdp(env.mdp)
+        
 
         self.args.log_file_name = f"{fixed_objects_start_state_mode}"
         self.args.record_video = capture_video
@@ -994,7 +1008,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         # Initialize logging
         logger = self.Logger(study_config, study_config.log_file_name, agent1=agent1, agent2=agent2, log_folder=f"videos/{self.run_name}")
         gametime = 10000
-        gameapp = self.LangOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime)
+        gameapp = self.LangOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime, args=self.args)
         score, type2_counts, overwritten_counts, action_length_varieties = gameapp.on_execute()
         
         del env
