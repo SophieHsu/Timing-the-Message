@@ -17,7 +17,7 @@ class MLPAgent(BaseAgent):
         super().__init__(args)
         self.feature_extractor = args.feature_extractor
 
-        if single_observation_space is None:
+        if single_observation_space is None or not isinstance(single_observation_space, np.int64):
             single_observation_space = np.array(single_observation_space.shape).prod()
 
         self.critic = nn.Sequential(

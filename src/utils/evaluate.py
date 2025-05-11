@@ -884,7 +884,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         from steakhouse_ai_py.agents.steak_agent import SteakLimitVisionHumanModel
         from src.agents.humans import HumanChefAgent
         from src.agents.lstm import NotifierLSTMAgent
-        from steakhouse_ai.src.utils import Logger, StudyConfig, initialize_config_from_args, LangOvercookedPygame
+        from steakhouse_ai.src.utils import Logger, StudyConfig, initialize_config_from_args, LangOvercookedPygame, LangBlockingOvercookedPygame
 
         # Store these imports for later use
         self.CommsSteakhouseEnv = CommsSteakhouseEnv
@@ -899,6 +899,7 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         self.StudyConfig = StudyConfig
         self.initialize_config_from_args = initialize_config_from_args
         self.LangOvercookedPygame = LangOvercookedPygame
+        self.LangBlockingOvercookedPygame = LangBlockingOvercookedPygame
         # Video saving settings
         self.video_fps = 10
         self.frame_count = 0
@@ -1008,7 +1009,10 @@ class CookingLSTMEvaluator(LSTMEvaluator):
         # Initialize logging
         logger = self.Logger(study_config, study_config.log_file_name, agent1=agent1, agent2=agent2, log_folder=f"videos/{self.run_name}")
         gametime = 10000
-        gameapp = self.LangOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime, args=self.args)
+        if self.args.block_rollout:
+            gameapp = self.LangBlockingOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime, args=self.args)
+        else:
+            gameapp = self.LangOvercookedPygame(env, agent1, agent2, logger, gameTime=gametime, args=self.args)
         score, type2_counts, overwritten_counts, action_length_varieties = gameapp.on_execute()
         
         del env

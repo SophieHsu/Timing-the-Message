@@ -659,21 +659,21 @@ class CookingLSTMRolloutWorker:
             self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
             print(f"Success")
 
-        # self.random_start_state_fn = self.world_mdp.get_random_objects_start_state_fn(
-        #         random_start_pos=True,
-        #         rnd_obj_prob_thresh=0.5
-        #     )
+        self.random_start_state_fn = self.world_mdp.get_random_objects_start_state_fn(
+                random_start_pos=True,
+                rnd_obj_prob_thresh=0.5
+            )
         
-        # rand_num = random.random()
-        # if rand_num <= 0.01:
-        self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn1()
-        # elif rand_num <= 0.02 and rand_num > 0.01:
-        #     self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn2()
+        rand_num = random.random()
+        if rand_num <= 0.01:
+            self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn1()
+        elif rand_num <= 0.02 and rand_num > 0.01:
+            self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn2()
         
         self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization, start_state_fn=self.random_start_state_fn)
         # self.env.reset(rand_start=self.args.rand_start)
         if self.args.one_dim_obs:
-            self.single_observation_space = (13,)
+            self.single_observation_space = (self.args.steakhouse_one_dim_obs_dim,)
         else:
             self.single_observation_space = tuple(list(self.env.mdp.shape) + [23])
         self.single_action_space_n = self.env.single_action_space
@@ -796,7 +796,6 @@ class CookingLSTMRolloutWorker:
                     self.writer.add_scalar("charts/episodic_length", step, global_step)
                 
                 try:
-                    print(f"New world mdp name: {self.layout_name}")
                     self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
                 except Exception as e:
                     print(e)
@@ -865,7 +864,7 @@ class CookingLSTMRolloutWorker:
                 reward += env_reward
                 reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
             reward -= args.agent_step_penalty
-            noti_penalty = self.agent.notification_reward(next_state)
+            noti_penalty = self.agent.notification_reward(next_state, infos['utterance'][0])
             if noti_penalty < 0 and self.args.early_termination:
                 next_done = True # early termination
             reward += noti_penalty * args.noti_penalty_weight
@@ -875,6 +874,186 @@ class CookingLSTMRolloutWorker:
             total_reward += reward
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).unsqueeze(0).to(device), torch.Tensor([next_done]).to(device)
+
+            first_flag = False
+
+        # bootstrap value if not done
+        with torch.no_grad():
+            next_value = self.agent.notifier_model.get_value(
+                next_agent_obs,
+                next_lstm_state,
+                next_done,
+            ).reshape(1, -1)
+            advantages = torch.zeros_like(rewards).to(device)
+            lastgaelam = 0
+            for t in reversed(range(args.num_steps)):
+                if t == args.num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - dones[t + 1]
+                    nextvalues = values[t + 1]
+                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
+                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + values
+
+        
+        if not next_done:
+            # Log metrics if writer is available
+            if self.writer is not None:
+                self.writer.add_scalar("charts/episodic_return", total_reward, global_step)
+                self.writer.add_scalar("charts/episodic_length", step, global_step)
+
+        return {
+            "global_step": global_step,
+            "obs": obs,
+            "next_agent_obs": full_next_agent_obs,
+            "actions": actions,
+            "logprobs": logprobs,
+            "rewards": rewards,
+            "dones": dones,
+            "values": values,
+            "returns": returns,
+            "advantages": advantages,
+            "next_lstm_state": next_lstm_state,
+        }
+
+    def blocked_rollout(self, global_step, next_lstm_state):
+        """
+        Run a rollout for args.num_steps steps and return rollout data.
+        Uses the agent's internal recurrent state.
+        """
+        if self.agent is None:
+            raise ValueError("Agent not set. Call set_agent first.")
+
+        args = self.args
+        device = self.device
+        
+        # Double-check device before starting rollout
+        if 'cuda' in str(device) and not torch.cuda.is_available():
+            print(f"Warning: CUDA requested but not available in rollout. Using CPU instead.")
+            device = torch.device('cpu')
+            self.device = device
+
+        # Initialize observation using agent's get_obs; also reset the agent's recurrent states.
+        vstates = self.agent.get_obs(self.env.state)
+        next_obs = torch.Tensor(vstates).unsqueeze(0).to(device)
+        next_done = torch.zeros(1).to(device)
+        info = {}
+        info["utterance"] = np.array([0]*self.env.noti_action_length)
+
+        total_reward = 0
+        first_flag = True
+
+        # Preallocate storage for rollout data.
+        obs = torch.zeros((args.num_steps,) + self.single_observation_space, device=device)
+        full_next_agent_obs = torch.zeros((args.num_steps*args.human_utterance_memory_length, self.num_envs) + (self.agent.notifier_model.single_observation_space,)).to(device)
+        actions = torch.zeros((args.num_steps,) + (self.single_action_space_n.shape[0]-1,), device=device)
+        logprobs = torch.zeros((args.num_steps,), device=device)
+        rewards = torch.zeros((args.num_steps,), device=device)
+        dones = torch.zeros((args.num_steps,), device=device)
+        values = torch.zeros((args.num_steps,), device=device)
+
+        for step in range(0, self.args.num_steps):
+            global_step += args.num_envs
+            obs[step] = next_obs
+            dones[step] = next_done
+
+            if next_done:
+                # Log metrics if writer is available
+                if self.writer is not None:
+                    self.writer.add_scalar("charts/episodic_return", total_reward, global_step)
+                    self.writer.add_scalar("charts/episodic_length", step, global_step)
+                
+                try:
+                    self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
+                except Exception as e:
+                    print(e)
+                    print(f"Layout {self.layout_name}")
+                    print(f"Try again...")
+                    if self.args.layout_random:
+                        self.layout_name = self.args.layout_name + str(random.randint(1,5))
+                    else:
+                        self.layout_name = self.args.layout_name
+                    print(f"New Layout {self.layout_name}")
+                    self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
+                    print(f"Success")
+                    
+                if not self.args.overfit:
+                    self.random_start_state_fn = self.world_mdp.get_random_objects_start_state_fn(
+                            random_start_pos=True,
+                            rnd_obj_prob_thresh=0.8
+                        )
+                    
+                    rand_num = random.random()
+                    if rand_num <= 0.01:
+                        self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn1()
+                    elif rand_num <= 0.02 and rand_num > 0.01:
+                        self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn2()
+                else:
+                    self.random_start_state_fn = self.world_mdp.get_fixed_objects_start_state_fn1()
+                
+                self.env = CommsSteakhouseEnv.from_mdp(self.world_mdp, horizon=self.args.max_episode_steps, discretization=self.args.discretization, start_state_fn=self.random_start_state_fn)
+                self.human_agent.reset()
+                self.human_agent.steakhouse_planner.init_knowledge_base(self.world_mdp.get_standard_start_state())
+                self.human_agent.steakhouse_planner.set_mdp(self.env.mdp)
+                self.agent.human_model.reset()
+                self.agent.human_model.set_agent_index(0)
+                self.agent.human_model.init_knowledge_base(self.world_mdp.get_standard_start_state())
+                self.agent.human_model.set_mdp(self.env.mdp)
+                self.agent.reset()
+                self.agent.set_agent_index(1)
+                self.agent.init_knowledge_base(self.env.state)
+                self.agent.set_mdp(self.env.mdp)
+                vstates = self.agent.get_obs(self.env.state)
+                next_obs = torch.Tensor(vstates).unsqueeze(0).to(device)
+                next_done = torch.zeros(1).to(device)
+
+                info = {}
+                info["utterance"] = np.array([0]*self.env.noti_action_length)
+                first_flag = True
+                total_reward = 0
+
+            # ALGO LOGIC: action logic
+            with torch.no_grad():
+                infos = info
+                infos["utterance"] = info["utterance"].reshape(self.num_envs, -1)
+                prev_agent_obs = full_next_agent_obs[-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
+                next_agent_obs = self.compute_next_agent_obs(next_obs, infos, num_envs=1, prev_agent_obs=prev_agent_obs, first_flag=first_flag)
+                action, logprob, _, value, next_lstm_state = self.agent.notifier_model.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
+                values[step] = value.flatten()
+            actions[step] = action
+            logprobs[step] = logprob
+            full_next_agent_obs[step] = next_agent_obs
+
+            reward = 0
+            for j in range((action.cpu().numpy()[0][-1]*3)+2):
+                # TRY NOT TO MODIFY: execute the game and log data.
+                human_action, overwrite_flag = self.human_agent.get_action(self.env.state, infos['utterance'])
+                if j == 0:
+                    full_actions = [action.cpu().numpy()[0], human_action, overwrite_flag]
+                else:
+                    full_actions = [[1,0,0], human_action, overwrite_flag]
+                _, _ = self.agent.action(self.env.state)
+                next_state, env_reward, next_done, info = self.env.step(full_actions)
+                next_obs = self.agent.get_obs(next_state)
+                if args.env_reward_mode:
+                    reward += env_reward
+                    reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
+                reward -= args.agent_step_penalty
+                noti_penalty = self.agent.notification_reward(next_state)
+                if noti_penalty < 0 and self.args.early_termination:
+                    next_done = True # early termination
+                reward += noti_penalty * args.noti_penalty_weight
+                if info["utterance"][0] == 2:
+                    reward -= self.args.new_noti_penalty
+                # reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
+                if next_done:
+                    break
+            
+            next_obs, next_done = torch.Tensor(next_obs).unsqueeze(0).to(device), torch.Tensor([next_done]).to(device)
+            rewards[step] = torch.tensor(reward).to(device).view(-1)
+            total_reward += reward
 
             first_flag = False
 
@@ -1003,7 +1182,10 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
             for i, worker in enumerate(self.workers):
                 worker_next_lstm_state= (next_lstm_state[0][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim), next_lstm_state[1][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim))
                 try:
-                    result = worker.rollout(global_step, worker_next_lstm_state)
+                    if self.args.block_rollout:
+                        result = worker.blocked_rollout(global_step, worker_next_lstm_state)
+                    else:
+                        result = worker.rollout(global_step, worker_next_lstm_state)
                     rollouts.append(result)
                 except Exception as e:
                     print(f"Error in debug mode rollout: {e}")
@@ -1014,7 +1196,10 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
             rollout_futures = []
             for i, worker in enumerate(self.workers):
                 worker_next_lstm_state= (next_lstm_state[0][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim), next_lstm_state[1][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim))
-                rollout_futures.append(worker.rollout.remote(global_step, worker_next_lstm_state))
+                if self.args.block_rollout:
+                    rollout_futures.append(worker.blocked_rollout.remote(global_step, worker_next_lstm_state))
+                else:
+                    rollout_futures.append(worker.rollout.remote(global_step, worker_next_lstm_state))
             
             # Collect results with error handling
             rollouts = []
@@ -1036,7 +1221,10 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
                             # Try one more time with the new worker
                             worker_next_lstm_state = (next_lstm_state[0][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim), next_lstm_state[1][:,i,:].reshape(-1,1,self.args.lstm_hidden_dim))
                             try:
-                                result = ray.get(self.workers[i].rollout.remote(global_step, worker_next_lstm_state), timeout=60)
+                                if self.args.block_rollout:
+                                    result = ray.get(self.workers[i].blocked_rollout.remote(global_step, worker_next_lstm_state), timeout=60)
+                                else:
+                                    result = ray.get(self.workers[i].rollout.remote(global_step, worker_next_lstm_state), timeout=60)
                                 rollouts.append(result)
                             except Exception as e:
                                 print(f"Replacement worker {i} also failed: {e}")
@@ -1089,7 +1277,10 @@ class CookingLSTMRolloutCollector(LSTMRolloutCollector):
         worker = CookingLSTMRolloutWorker(self.args, self.ray_debug_mode)
         agent_state_dict = {k: v.cpu().clone() for k, v in self.agent.state_dict().items()}
         worker.set_agent(agent_state_dict)
-        return worker.rollout(global_step, next_lstm_state)
+        if self.args.block_rollout:
+            return worker.blocked_rollout(global_step, next_lstm_state)
+        else:
+            return worker.rollout(global_step, next_lstm_state)
     
     def __del__(self):
         """Clean up Ray resources when the collector is destroyed."""

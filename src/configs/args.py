@@ -28,6 +28,7 @@ class Args:
     total_timesteps: int = int(1e9)
     highway_features_dim: int = 64
     steakhouse_feature_dim: int = 128
+    steakhouse_one_dim_obs_dim: int = 13
     max_episode_steps: int = 65
     layout_random: bool = False
     
@@ -43,9 +44,11 @@ class Args:
     noti_penalty_weight: float = 1.0
     agent_step_penalty: float = 0.00
     env_reward_mode: bool = False
-    one_dim_obs: bool = True
+    one_dim_obs: bool = False
     early_termination: bool = False
     new_noti_penalty: float = 0.00
+    block_rollout: bool = False
+    overfit: bool = False
     
     # Human agent settings
     human_agent_type: str = "chef" # Options: "None", "mlp", "lstm", "transformer", "IDM", "chef"

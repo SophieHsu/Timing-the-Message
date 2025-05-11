@@ -78,7 +78,7 @@ class NotifierLSTMAgent(LSTMAgent):
         flatten_observation_space = np.array(single_observation_space).prod() if isinstance(single_observation_space, tuple) else np.array(single_observation_space.shape).prod()
         
         if self.args.env_id == "steakhouse" and self.args.one_dim_obs:
-            flatten_observation_space = 13 
+            flatten_observation_space = self.args.steakhouse_one_dim_obs_dim
 
         if self.agent_obs_mode == "history":
             self.single_observation_space = (flatten_observation_space + (single_action_space.shape[0]-1))*self.human_utterance_memory_length
@@ -98,6 +98,8 @@ class NotifierLSTMAgent(LSTMAgent):
         self.use_condition_head = args.use_condition_head
         if len(single_action_space.nvec) == 4:
             self.condition_dim, self.id_dim, self.length_dim, _ = single_action_space.nvec
+        elif len(single_action_space.nvec) == 3:
+            self.condition_dim, self.id_dim, _ = single_action_space.nvec
         else:
             self.use_react_head = True
             self.condition_dim, self.id_dim, self.react_dim, self.length_dim, _ = single_action_space.nvec
@@ -105,7 +107,9 @@ class NotifierLSTMAgent(LSTMAgent):
         if self.use_condition_head:
             self.condition_head = layer_init(nn.Linear(128, self.condition_dim), std=0.01)
         self.id_head = layer_init(nn.Linear(128, self.id_dim), std=0.01)
-        self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
+
+        if args.discretization != "shortvlong":
+            self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
         if self.use_react_head:
             self.react_head = nn.Linear(128, self.react_dim)
             
@@ -139,9 +143,9 @@ class NotifierLSTMAgent(LSTMAgent):
         hidden, lstm_state = self.get_states(x, lstm_state, done)
 
         id_logits = self.id_head(hidden)
-        length_logits = self.length_head(hidden)
+        if self.args.discretization != "shortvlong": length_logits = self.length_head(hidden)
         id_probs = Categorical(logits=id_logits)
-        length_probs = Categorical(logits=length_logits)
+        if self.args.discretization != "shortvlong": length_probs = Categorical(logits=length_logits)
         
         
         if self.use_condition_head:
@@ -164,19 +168,28 @@ class NotifierLSTMAgent(LSTMAgent):
                 react = torch.zeros(self.args.num_envs).to(self.args.device)
 
             id = id_probs.sample()
-            length = length_probs.sample()
+            if self.args.discretization != "shortvlong":
+                length = length_probs.sample()
 
-            if self.use_react_head:
+            if self.use_react_head and self.args.discretization != "shortvlong":
                 action = torch.stack([condition, id, length, react], dim=1)
+            elif self.use_react_head and self.args.discretization == "shortvlong":
+                action = torch.stack([condition, id, react], dim=1)
+            elif not self.use_react_head and self.args.discretization == "shortvlong":
+                action = torch.stack([condition, id], dim=1)
             else:
                 action = torch.stack([condition, id, length], dim=1)
 
         if self.use_condition_head:
-            logprob = condition_probs.log_prob(action[:, 0]) + id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
-            entropy = condition_probs.entropy() + id_probs.entropy() + length_probs.entropy()
+            logprob = condition_probs.log_prob(action[:, 0]) + id_probs.log_prob(action[:, 1])
+            entropy = condition_probs.entropy() + id_probs.entropy() 
         else:
-            logprob = id_probs.log_prob(action[:, 1]) + length_probs.log_prob(action[:, 2])
-            entropy = id_probs.entropy() + length_probs.entropy()
+            logprob = id_probs.log_prob(action[:, 1])
+            entropy = id_probs.entropy()
+
+        if self.args.discretization != "shortvlong":
+            logprob = logprob + length_probs.log_prob(action[:, 2])
+            entropy = entropy + length_probs.entropy()
 
         if self.use_react_head:
             logprob = logprob + react_probs.log_prob(action[:, 3])

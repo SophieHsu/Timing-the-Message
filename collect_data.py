@@ -55,12 +55,18 @@ def main():
     
     # Create vectorized environment
     envs = SyncVectorEnv([make_env(args.env_id, i, False, args.exp_name) for i in range(num_envs)])
+
+    # Update args from envs
+    if args.env_id != "steakhouse":
+        args.noti_action_length = envs.envs[0].unwrapped.noti_action_length
+    else:
+        args.noti_action_length = envs.noti_action_length
     
     # Create agent based on args
     if args.agent_type == "mlp":
-        agent = NotifierMLPAgent(envs, args).to(device)
+        agent = NotifierMLPAgent(args, envs.single_observation_space, envs.single_action_space, args.noti_action_length).to(device)
     elif args.agent_type == "lstm":
-        agent = NotifierLSTMAgent(envs, args).to(device)
+        agent = NotifierLSTMAgent(args, envs.single_observation_space, envs.single_action_space).to(device)
     elif args.agent_type == "transformer":
         agent = TransformerAgent(envs, args).to(device)
     elif args.agent_type == "heuristic":

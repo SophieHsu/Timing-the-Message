@@ -25,7 +25,7 @@ class HumanAgent:
         
             if args.human_agent_type == "mlp":
                 print(envs.single_observation_space)
-                self.policy_network = MLPAgent(args, envs.single_observation_space).to(self.device)
+                self.policy_network = MLPAgent(args, envs.single_observation_space, envs.single_action_space).to(self.device)
             elif args.human_agent_type == "lstm":
                 self.policy_network = LSTMAgent(args, envs.single_observation_space).to(self.device)
             elif args.human_agent_type == "transformer":
@@ -259,6 +259,7 @@ class HumanChefAgent(HumanAgent):
             debug=False,
         )
 
+
     def process_utterance(self, utterance):
         # Update utterance memory with the new utterance
         self.utterance_memory = np.concatenate([self.utterance_memory[:,1:], utterance.reshape(self.num_envs, 1, self.noti_action_length)], axis=1)
@@ -292,25 +293,41 @@ class HumanChefAgent(HumanAgent):
                 if track_noti_actions[env_idx] is None:
                     track_lengths[env_idx] += 1
                     tmp_utter = tuple(utter)
-                    track_noti_actions[env_idx], track_noti_action_lengths[env_idx] = tmp_utter[1], tmp_utter[2]
-                    track_noti_action_reaction_lengths[env_idx] = 2
+                    if self.args.discretization == "shortvlong":
+                        track_noti_actions[env_idx] = tmp_utter[1]
+                        if tmp_utter[1] == 4:
+                            track_noti_action_lengths[env_idx] = 5
+                        else:
+                            track_noti_action_lengths[env_idx] = 2
+                    else:
+                        track_noti_actions[env_idx], track_noti_action_lengths[env_idx] = tmp_utter[1], tmp_utter[2]
+                    track_noti_action_reaction_lengths[env_idx] = track_noti_action_lengths[env_idx]
                     if not self.args.human_comprehend_bool:
-                        track_noti_action_lengths[env_idx] = 1
+                        track_noti_action_reaction_lengths[env_idx] = 1
                     is_done[env_idx] = True
                 else:
                     is_done[env_idx] = True
 
-            # update overwrite action to indicate to update knowledge directly once the full length (>=5) is reached
-            if self.args.human_comprehend_bool:
+            if self.args.discretization != "shortvlong":
+                # update overwrite action to indicate to update knowledge directly once the full length (>=5) is reached
+                if self.args.human_comprehend_bool:
+                    valid_update_overwrite_lengths = np.where((track_noti_action_reaction_lengths != track_noti_action_lengths) & (track_lengths == track_noti_action_lengths))[0]
+                    self.track_overwrite[valid_update_overwrite_lengths] = 1
+                    self.overwrite_length[valid_update_overwrite_lengths] = 2
+                    self.overwrite_action[valid_update_overwrite_lengths] = 4 # indicating to update knowledge directly
+            else:
+                # update overwrite length
                 valid_update_overwrite_lengths = np.where((track_noti_action_reaction_lengths != track_noti_action_lengths) & (track_lengths == track_noti_action_lengths))[0]
-                self.track_overwrite[valid_update_overwrite_lengths] = 1
-                self.overwrite_length[valid_update_overwrite_lengths] = 2
-                self.overwrite_action[valid_update_overwrite_lengths] = 4 # indicating to update knowledge directly
+                self.overwrite_length[valid_update_overwrite_lengths] = track_noti_action_lengths[valid_update_overwrite_lengths]
 
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]
             self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
             if not self.args.fix_overwrite:
-                self.tmp_overwrite_length[valid_lengths] = (track_noti_action_reaction_lengths[valid_lengths]-2)*2 + 2 # 5length = 8overwrite, 2length = 2overwrite
+                self.tmp_overwrite_length[valid_lengths] = track_noti_action_lengths[valid_lengths]
+
+            # can only change lane once
+            only_once = np.where((track_noti_actions == 4) & (track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]
+            self.tmp_overwrite_length[only_once] = 1
 
             self.track_reaction_delay[valid_lengths] = 1
             is_done[valid_lengths] = True
