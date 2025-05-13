@@ -85,7 +85,8 @@ class BaseRolloutCollector:
         return next_agent_obs
 
     def collect_rollouts(self, global_step):
-        next_obs, infos = self.envs.reset(seed=self.args.seed)
+        self.initialize_storage()
+        next_obs, infos = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(self.device)
         
         next_done = torch.zeros(self.num_envs).to(self.device)
@@ -804,9 +805,16 @@ class CookingLSTMRolloutWorker:
                     if self.args.layout_random:
                         self.layout_name = self.args.layout_name + str(random.randint(1,5))
                     else:
-                        self.layout_name = self.args.layout_name
+                        self.layout_name = self.args.layout_name + '_same'
                     print(f"New Layout {self.layout_name}")
-                    self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
+                    try:
+                        self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
+                    except Exception as e:
+                        print(e)
+                        print(f"Layout {self.layout_name}")
+                        print(f"Try again 2...")
+                        self.layout_name = self.args.layout_name + '_same'
+                        self.world_mdp = SteakhouseGridworld.from_layout_name(self.layout_name)
                     print(f"Success")
 
                 self.random_start_state_fn = self.world_mdp.get_random_objects_start_state_fn(
@@ -864,9 +872,10 @@ class CookingLSTMRolloutWorker:
                 reward += env_reward
                 reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
             reward -= args.agent_step_penalty
-            noti_penalty = self.agent.notification_reward(next_state, infos['utterance'][0])
-            if noti_penalty < 0 and self.args.early_termination:
+            noti_penalty, wrong_item = self.agent.notification_reward(next_state, infos['utterance'][0], dense_reward=args.dense_reward)
+            if wrong_item and self.args.early_termination:
                 next_done = True # early termination
+                reward -= self.args.non_completion_penalty
             reward += noti_penalty * args.noti_penalty_weight
             if info["utterance"][0] == 2:
                 reward -= self.args.new_noti_penalty
@@ -1041,9 +1050,10 @@ class CookingLSTMRolloutWorker:
                     reward += env_reward
                     reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
                 reward -= args.agent_step_penalty
-                noti_penalty = self.agent.notification_reward(next_state)
-                if noti_penalty < 0 and self.args.early_termination:
+                noti_penalty, wrong_item = self.agent.notification_reward(next_state, dense_reward=args.dense_reward)
+                if wrong_item and self.args.early_termination:
                     next_done = True # early termination
+                    reward -= self.args.non_completion_penalty
                 reward += noti_penalty * args.noti_penalty_weight
                 if info["utterance"][0] == 2:
                     reward -= self.args.new_noti_penalty

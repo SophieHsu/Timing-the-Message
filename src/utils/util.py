@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import gymnasium as gym
+import highway_env
 from steakhouse_ai_py.mdp.steakhouse_mdp import SteakhouseGridworld
 from steakhouse_ai_py.mdp.steakhouse_env import CommsSteakhouseEnv
 from steakhouse_ai_py.planners.steak_planner import SteakMediumLevelActionManager

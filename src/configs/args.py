@@ -49,6 +49,8 @@ class Args:
     new_noti_penalty: float = 0.00
     block_rollout: bool = False
     overfit: bool = False
+    dense_reward: bool = False
+    non_completion_penalty: float = 0
     
     # Human agent settings
     human_agent_type: str = "chef" # Options: "None", "mlp", "lstm", "transformer", "IDM", "chef"
@@ -58,6 +60,7 @@ class Args:
     human_reaction_delay: int = 0
     human_comprehend_bool: bool = False
     fix_overwrite: bool = False
+    rand_human_reaction_delay_sigma: float = 0
 
     # PPO settings
     learning_rate: float = 2.5e-4

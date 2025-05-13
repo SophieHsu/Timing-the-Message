@@ -36,7 +36,16 @@ class HumanAgent:
             self.policy_network.eval()
 
         self.overwrite_length = 3
-        self.reaction_delay = self.args.human_reaction_delay
+        if self.args.rand_human_reaction_delay_sigma != 0:
+            rand_delay = int(np.random.normal(2, self.args.rand_human_reaction_delay_sigma))
+            if rand_delay < 0:
+                rand_delay = 0
+            if rand_delay > 4:
+                rand_delay = 4
+            self.reaction_delay = rand_delay
+        else:
+            self.reaction_delay = self.args.human_reaction_delay
+        print(f"reaction_delay: {self.reaction_delay}")
         self.num_envs = num_envs if num_envs is not None else self.args.num_envs
         self.reset()
 
@@ -155,13 +164,13 @@ class HumanAgent:
     
 
 class HumanDriverAgent(HumanAgent):
-    def __init__(self, envs, args, device):
-        super().__init__(envs, args, device)
+    def __init__(self, envs, args, device, num_envs=None):
+        super().__init__(envs, args, device, num_envs)
 
     
     def process_utterance(self, utterance):
         # Update utterance memory with the new utterance
-        self.utterance_memory = np.concatenate([self.utterance_memory[:,1:], utterance.reshape(self.args.num_envs, 1, self.noti_action_length)], axis=1)
+        self.utterance_memory = np.concatenate([self.utterance_memory[:,1:], utterance.reshape(self.num_envs, 1, self.noti_action_length)], axis=1)
 
         # Initialize arrays for vectorized processing
         num_envs = self.utterance_memory.shape[0]
@@ -225,7 +234,7 @@ class HumanDriverAgent(HumanAgent):
 
     def get_action(self, obs, utterance):
         # ACTIONS_ALL = {0: "LANE_LEFT", 1: "IDLE", 2: "LANE_RIGHT", 3: "FASTER", 4: "SLOWER"}
-        action = np.array([-1]*self.args.num_envs) 
+        action = np.array([-1]*self.num_envs) 
 
         # Update action based on utterance
         self.process_utterance(utterance)
@@ -303,7 +312,7 @@ class HumanChefAgent(HumanAgent):
                         track_noti_actions[env_idx], track_noti_action_lengths[env_idx] = tmp_utter[1], tmp_utter[2]
                     track_noti_action_reaction_lengths[env_idx] = track_noti_action_lengths[env_idx]
                     if not self.args.human_comprehend_bool:
-                        track_noti_action_reaction_lengths[env_idx] = 1
+                        track_noti_action_lengths[env_idx] = 1
                     is_done[env_idx] = True
                 else:
                     is_done[env_idx] = True
@@ -323,11 +332,14 @@ class HumanChefAgent(HumanAgent):
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]
             self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
             if not self.args.fix_overwrite:
-                self.tmp_overwrite_length[valid_lengths] = track_noti_action_lengths[valid_lengths]
+                self.tmp_overwrite_length[valid_lengths] = track_noti_action_reaction_lengths[valid_lengths]
 
             # can only change lane once
             only_once = np.where((track_noti_actions == 4) & (track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]
             self.tmp_overwrite_length[only_once] = 1
+
+            only_twice = np.where((track_noti_actions != 4) & (track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]
+            self.tmp_overwrite_length[only_twice] = 2
 
             self.track_reaction_delay[valid_lengths] = 1
             is_done[valid_lengths] = True

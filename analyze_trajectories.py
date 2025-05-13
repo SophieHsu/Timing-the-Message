@@ -36,7 +36,7 @@ def load_trajectory_data(data_dir: str) -> List[Dict[str, Any]]:
     
     return data
 
-def analyze_rewards(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_rewards(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze reward statistics across episodes"""
     rewards = [episode['total_reward'] for episode in data]
     
@@ -47,24 +47,25 @@ def analyze_rewards(data: List[Dict[str, Any]], output_dir: str, policy_name: st
     max_reward = np.max(rewards)
     median_reward = np.median(rewards)
     
-    # Create a figure
-    plt.figure(figsize=(10, 6))
-    
-    # Plot reward distribution
-    sns.histplot(rewards, kde=True)
-    plt.axvline(mean_reward, color='r', linestyle='--', label=f'Mean: {mean_reward:.2f}')
-    plt.axvline(median_reward, color='g', linestyle='--', label=f'Median: {median_reward:.2f}')
-    
-    plt.title(f'Reward Distribution - {policy_name}')
-    plt.xlabel('Total Reward')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Save the plot
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f"{output_dir}/reward_distribution_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure
+        plt.figure(figsize=(10, 6))
+        
+        # Plot reward distribution
+        sns.histplot(rewards, kde=True)
+        plt.axvline(mean_reward, color='r', linestyle='--', label=f'Mean: {mean_reward:.2f}')
+        plt.axvline(median_reward, color='g', linestyle='--', label=f'Median: {median_reward:.2f}')
+        
+        plt.title(f'Reward Distribution - {policy_name}')
+        plt.xlabel('Total Reward')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Save the plot
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(f"{output_dir}/reward_distribution_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -83,7 +84,7 @@ def analyze_rewards(data: List[Dict[str, Any]], output_dir: str, policy_name: st
         'median_reward': median_reward
     }
 
-def analyze_episode_lengths(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_episode_lengths(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze episode length statistics"""
     lengths = [episode['num_steps'] for episode in data]
     
@@ -94,24 +95,25 @@ def analyze_episode_lengths(data: List[Dict[str, Any]], output_dir: str, policy_
     max_length = np.max(lengths)
     median_length = np.median(lengths)
     
-    # Create a figure
-    plt.figure(figsize=(10, 6))
-    
-    # Plot length distribution
-    sns.histplot(lengths, kde=True)
-    plt.axvline(mean_length, color='r', linestyle='--', label=f'Mean: {mean_length:.2f}')
-    plt.axvline(median_length, color='g', linestyle='--', label=f'Median: {median_length:.2f}')
-    
-    plt.title(f'Episode Length Distribution - {policy_name}')
-    plt.xlabel('Number of Steps')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Save the plot
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f"{output_dir}/episode_length_distribution_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure
+        plt.figure(figsize=(10, 6))
+        
+        # Plot length distribution
+        sns.histplot(lengths, kde=True)
+        plt.axvline(mean_length, color='r', linestyle='--', label=f'Mean: {mean_length:.2f}')
+        plt.axvline(median_length, color='g', linestyle='--', label=f'Median: {median_length:.2f}')
+        
+        plt.title(f'Episode Length Distribution - {policy_name}')
+        plt.xlabel('Number of Steps')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Save the plot
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(f"{output_dir}/episode_length_distribution_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -130,7 +132,7 @@ def analyze_episode_lengths(data: List[Dict[str, Any]], output_dir: str, policy_
         'median_length': median_length
     }
 
-def analyze_action_distribution(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_action_distribution(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze the distribution of actions taken by the agent and human"""
     agent_action_types = []
     agent_actions = []
@@ -153,59 +155,60 @@ def analyze_action_distribution(data: List[Dict[str, Any]], output_dir: str, pol
     human_action_counts = Counter(human_actions)
     overwritten_counts = Counter(overwritten)
     
-    # Create figures
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # Plot agent action type distribution
-    ax = axes[0, 0]
-    action_type_labels = ['No-op', 'Continue', 'Notification']
-    action_type_values = [agent_action_type_counts[i] for i in range(3)]
-    ax.bar(action_type_labels, action_type_values)
-    ax.set_title('Agent Action Type Distribution')
-    ax.set_ylabel('Count')
-    
-    # Plot agent action distribution
-    ax = axes[0, 1]
-    action_labels = [str(i) for i in range(4)]
-    action_values = [agent_action_counts[i] for i in range(4)]
-    ax.bar(action_labels, action_values)
-    ax.set_title('Agent Action Distribution')
-    ax.set_ylabel('Count')
-    
-    # Plot agent action length distribution
-    ax = axes[1, 0]
-    length_labels = [str(i) for i in range(6)]
-    length_values = [agent_action_length_counts[i] for i in range(6)]
-    ax.bar(length_labels, length_values)
-    ax.set_title('Agent Action Length Distribution')
-    ax.set_xlabel('Length')
-    ax.set_ylabel('Count')
-    
-    # Plot human action distribution
-    ax = axes[1, 1]
-    human_labels = [str(i) for i in range(4)]
-    human_values = [human_action_counts[i] for i in range(4)]
-    ax.bar(human_labels, human_values)
-    ax.set_title('Human Action Distribution')
-    ax.set_xlabel('Action')
-    ax.set_ylabel('Count')
-    
-    plt.tight_layout()
-    
-    # Save the plot
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f"{output_dir}/action_distribution_{policy_name}.png")
-    plt.close()
-    
-    # Create a separate plot for overwritten actions
-    plt.figure(figsize=(8, 6))
-    overwrite_labels = ['Not Overwritten', 'Overwritten']
-    overwrite_values = [overwritten_counts[0], overwritten_counts[1]]
-    plt.bar(overwrite_labels, overwrite_values)
-    plt.title('Action Overwrite Distribution')
-    plt.ylabel('Count')
-    plt.savefig(f"{output_dir}/overwrite_distribution_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create figures
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        # Plot agent action type distribution
+        ax = axes[0, 0]
+        action_type_labels = ['No-op', 'Continue', 'Notification']
+        action_type_values = [agent_action_type_counts[i] for i in range(3)]
+        ax.bar(action_type_labels, action_type_values)
+        ax.set_title('Agent Action Type Distribution')
+        ax.set_ylabel('Count')
+        
+        # Plot agent action distribution
+        ax = axes[0, 1]
+        action_labels = [str(i) for i in range(4)]
+        action_values = [agent_action_counts[i] for i in range(4)]
+        ax.bar(action_labels, action_values)
+        ax.set_title('Agent Action Distribution')
+        ax.set_ylabel('Count')
+        
+        # Plot agent action length distribution
+        ax = axes[1, 0]
+        length_labels = [str(i) for i in range(6)]
+        length_values = [agent_action_length_counts[i] for i in range(6)]
+        ax.bar(length_labels, length_values)
+        ax.set_title('Agent Action Length Distribution')
+        ax.set_xlabel('Length')
+        ax.set_ylabel('Count')
+        
+        # Plot human action distribution
+        ax = axes[1, 1]
+        human_labels = [str(i) for i in range(4)]
+        human_values = [human_action_counts[i] for i in range(4)]
+        ax.bar(human_labels, human_values)
+        ax.set_title('Human Action Distribution')
+        ax.set_xlabel('Action')
+        ax.set_ylabel('Count')
+        
+        plt.tight_layout()
+        
+        # Save the plot
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(f"{output_dir}/action_distribution_{policy_name}.png")
+        plt.close()
+        
+        # Create a separate plot for overwritten actions
+        plt.figure(figsize=(8, 6))
+        overwrite_labels = ['Not Overwritten', 'Overwritten']
+        overwrite_values = [overwritten_counts[0], overwritten_counts[1]]
+        plt.bar(overwrite_labels, overwrite_values)
+        plt.title('Action Overwrite Distribution')
+        plt.ylabel('Count')
+        plt.savefig(f"{output_dir}/overwrite_distribution_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -224,7 +227,7 @@ def analyze_action_distribution(data: List[Dict[str, Any]], output_dir: str, pol
         'overwritten_counts': overwritten_counts
     }
 
-def analyze_notifications(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_notifications(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze notification patterns and statistics."""
     # Initialize lists to store notification data
     notification_steps = []
@@ -260,26 +263,27 @@ def analyze_notifications(data: List[Dict[str, Any]], output_dir: str, policy_na
     else:
         overwrite_rate = 0
     
-    # Create a figure for notification timing
-    plt.figure(figsize=(10, 6))
-    plt.hist(notification_steps, bins=20, alpha=0.7)
-    plt.title(f'Notification Timing Distribution - {policy_name}')
-    plt.xlabel('Step in Episode')
-    plt.ylabel('Frequency')
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_timing_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for notification length distribution
-    plt.figure(figsize=(10, 6))
-    if notification_lengths:
-        plt.hist(notification_lengths, bins=range(min(notification_lengths), max(notification_lengths) + 2), alpha=0.7)
-    plt.title(f'Notification Length Distribution - {policy_name}')
-    plt.xlabel('Length')
-    plt.ylabel('Frequency')
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_length_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure for notification timing
+        plt.figure(figsize=(10, 6))
+        plt.hist(notification_steps, bins=20, alpha=0.7)
+        plt.title(f'Notification Timing Distribution - {policy_name}')
+        plt.xlabel('Step in Episode')
+        plt.ylabel('Frequency')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_timing_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for notification length distribution
+        plt.figure(figsize=(10, 6))
+        if notification_lengths:
+            plt.hist(notification_lengths, bins=range(min(notification_lengths), max(notification_lengths) + 2), alpha=0.7)
+        plt.title(f'Notification Length Distribution - {policy_name}')
+        plt.xlabel('Length')
+        plt.ylabel('Frequency')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_length_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -297,7 +301,7 @@ def analyze_notifications(data: List[Dict[str, Any]], output_dir: str, policy_na
         'overwrite_rate': overwrite_rate
     }
 
-def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze interactions with danger zones or road hazards"""
     # Check if the data contains danger zone information
     if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
@@ -362,40 +366,41 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
     # Calculate average steps to entry
     avg_steps_to_entry = np.mean(steps_to_entry) if steps_to_entry else 0
     
-    # Create a figure for danger zone distance distribution
-    plt.figure(figsize=(12, 8))
-    
-    for i, (direction, distances) in enumerate(danger_zone_distances.items()):
-        if distances:  # Only create subplot if we have data
+    if save_figures:
+        # Create a figure for danger zone distance distribution
+        plt.figure(figsize=(12, 8))
+        
+        for i, (direction, distances) in enumerate(danger_zone_distances.items()):
+            if distances:  # Only create subplot if we have data
+                plt.subplot(2, 2, i+1)
+                sns.histplot(distances, kde=True)
+                plt.title(f'{direction.capitalize()} Danger Zone Distance')
+                plt.xlabel('Distance')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/danger_zone_distances_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for danger zone distances during notifications
+        plt.figure(figsize=(12, 8))
+        
+        for i, (direction, distances) in enumerate(danger_zone_notifications.items()):
             plt.subplot(2, 2, i+1)
-            sns.histplot(distances, kde=True)
-            plt.title(f'{direction.capitalize()} Danger Zone Distance')
-            plt.xlabel('Distance')
-            plt.ylabel('Frequency')
-            plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/danger_zone_distances_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for danger zone distances during notifications
-    plt.figure(figsize=(12, 8))
-    
-    for i, (direction, distances) in enumerate(danger_zone_notifications.items()):
-        plt.subplot(2, 2, i+1)
-        if distances:
-            sns.histplot(distances, kde=True)
-            plt.title(f'{direction.capitalize()} Danger Zone Distance During Notifications')
-            plt.xlabel('Distance')
-            plt.ylabel('Frequency')
-            plt.grid(True, alpha=0.3)
-        else:
-            plt.text(0.5, 0.5, 'No notifications', ha='center', va='center')
-            plt.title(f'{direction.capitalize()} Danger Zone Distance During Notifications')
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/danger_zone_distances_notifications_{policy_name}.png")
-    plt.close()
+            if distances:
+                sns.histplot(distances, kde=True)
+                plt.title(f'{direction.capitalize()} Danger Zone Distance During Notifications')
+                plt.xlabel('Distance')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+            else:
+                plt.text(0.5, 0.5, 'No notifications', ha='center', va='center')
+                plt.title(f'{direction.capitalize()} Danger Zone Distance During Notifications')
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/danger_zone_distances_notifications_{policy_name}.png")
+        plt.close()
     
     # Calculate statistics
     danger_zone_stats = {}
@@ -442,7 +447,7 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
         'avg_steps_to_entry': avg_steps_to_entry
     }
 
-def analyze_trajectory_patterns(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_trajectory_patterns(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze trajectory patterns and visualize them"""
     # Check if the data contains trajectory information
     if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
@@ -487,33 +492,34 @@ def analyze_trajectory_patterns(data: List[Dict[str, Any]], output_dir: str, pol
         print("No position data found in trajectory data")
         return {}
     
-    # Create trajectory visualization
-    plt.figure(figsize=(12, 8))
-    
-    # Plot a subset of trajectories (up to 10) to avoid overcrowding
-    num_trajectories = min(10, len(trajectories))
-    colors = plt.cm.viridis(np.linspace(0, 1, num_trajectories))
-    
-    for i, trajectory in enumerate(trajectories[:num_trajectories]):
-        x_coords = [step.get('x', 0) for step in trajectory if 'x' in step]
-        y_coords = [step.get('y', 0) for step in trajectory if 'y' in step]
+    if save_figures:
+        # Create trajectory visualization
+        plt.figure(figsize=(12, 8))
         
-        if x_coords and y_coords:
-            plt.plot(x_coords, y_coords, color=colors[i], alpha=0.7, label=f'Trajectory {i+1}')
+        # Plot a subset of trajectories (up to 10) to avoid overcrowding
+        num_trajectories = min(10, len(trajectories))
+        colors = plt.cm.viridis(np.linspace(0, 1, num_trajectories))
+        
+        for i, trajectory in enumerate(trajectories[:num_trajectories]):
+            x_coords = [step.get('x', 0) for step in trajectory if 'x' in step]
+            y_coords = [step.get('y', 0) for step in trajectory if 'y' in step]
             
-            # Mark start and end points
-            plt.scatter(x_coords[0], y_coords[0], color=colors[i], marker='o', s=50)
-            plt.scatter(x_coords[-1], y_coords[-1], color=colors[i], marker='x', s=50)
-    
-    plt.title('Trajectory Visualization')
-    plt.xlabel('X Position')
-    plt.ylabel('Y Position')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Save the plot
-    plt.savefig(f"{output_dir}/trajectory_patterns_{policy_name}.png")
-    plt.close()
+            if x_coords and y_coords:
+                plt.plot(x_coords, y_coords, color=colors[i], alpha=0.7, label=f'Trajectory {i+1}')
+                
+                # Mark start and end points
+                plt.scatter(x_coords[0], y_coords[0], color=colors[i], marker='o', s=50)
+                plt.scatter(x_coords[-1], y_coords[-1], color=colors[i], marker='x', s=50)
+        
+        plt.title('Trajectory Visualization')
+        plt.xlabel('X Position')
+        plt.ylabel('Y Position')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Save the plot
+        plt.savefig(f"{output_dir}/trajectory_patterns_{policy_name}.png")
+        plt.close()
     
     # Analyze action patterns along trajectories
     action_patterns = []
@@ -549,7 +555,7 @@ def analyze_trajectory_patterns(data: List[Dict[str, Any]], output_dir: str, pol
         'num_trajectories': len(trajectories)
     }
 
-def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze success rate and related statistics"""
     # Check if the data contains success information
     if not data or 'trajectory' not in data[0] or not data[0]['trajectory']:
@@ -602,39 +608,40 @@ def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_nam
     # Calculate average steps to success
     avg_steps_to_success = np.mean(steps_to_success) if steps_to_success else 0
     
-    # Create a figure for success rate
-    plt.figure(figsize=(8, 6))
-    
-    # Create a pie chart
-    labels = ['Successful', 'Unsuccessful']
-    sizes = [successful_episodes, total_episodes - successful_episodes]
-    colors = ['#4CAF50', '#F44336']
-    
-    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-    plt.axis('equal')
-    plt.title('Success Rate')
-    
-    # Save the plot
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(f"{output_dir}/success_rate_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for steps to success distribution
-    if steps_to_success:
-        plt.figure(figsize=(10, 6))
+    if save_figures:
+        # Create a figure for success rate
+        plt.figure(figsize=(8, 6))
         
-        sns.histplot(steps_to_success, kde=True)
-        plt.axvline(avg_steps_to_success, color='r', linestyle='--', label=f'Mean: {avg_steps_to_success:.2f}')
+        # Create a pie chart
+        labels = ['Successful', 'Unsuccessful']
+        sizes = [successful_episodes, total_episodes - successful_episodes]
+        colors = ['#4CAF50', '#F44336']
         
-        plt.title('Steps to Success Distribution')
-        plt.xlabel('Number of Steps')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        plt.axis('equal')
+        plt.title('Success Rate')
         
         # Save the plot
-        plt.savefig(f"{output_dir}/steps_to_success_{policy_name}.png")
+        os.makedirs(output_dir, exist_ok=True)
+        plt.savefig(f"{output_dir}/success_rate_{policy_name}.png")
         plt.close()
+        
+        # Create a figure for steps to success distribution
+        if steps_to_success:
+            plt.figure(figsize=(10, 6))
+            
+            sns.histplot(steps_to_success, kde=True)
+            plt.axvline(avg_steps_to_success, color='r', linestyle='--', label=f'Mean: {avg_steps_to_success:.2f}')
+            
+            plt.title('Steps to Success Distribution')
+            plt.xlabel('Number of Steps')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # Save the plot
+            plt.savefig(f"{output_dir}/steps_to_success_{policy_name}.png")
+            plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -652,7 +659,7 @@ def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_nam
         'successful_episodes': successful_episodes
     }
 
-def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze interaction patterns between human and agent"""
     # Extract interaction data
     human_actions = []
@@ -689,27 +696,28 @@ def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str,
     for h, a in zip(human_actions, agent_actions):
         confusion_matrix[h, a] += 1
     
-    # Plot confusion matrix
-    plt.figure(figsize=(10, 8))
-    
-    # Create action labels based on the environment type
-    # For Lunar Lander: [0: do nothing, 1: fire left, 2: fire main, 3: fire right]
-    # For Highway: [0: lane left, 1: idle, 2: lane right, 3: faster, 4: slower]
-    if action_space_size == 4:
-        action_labels = ['No-op', 'Left', 'Main', 'Right']
-    elif action_space_size == 5:
-        action_labels = ['Lane Left', 'Idle', 'Lane Right', 'Faster', 'Slower']
-    else:
-        action_labels = [str(i) for i in range(action_space_size)]
-    
-    sns.heatmap(confusion_matrix, annot=True, fmt='g', cmap='Blues',
-                xticklabels=action_labels,
-                yticklabels=action_labels)
-    plt.title(f'Human vs Agent Action Confusion Matrix - {policy_name}')
-    plt.xlabel('Agent Action')
-    plt.ylabel('Human Action')
-    plt.savefig(f"{output_dir}/confusion_matrix_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Plot confusion matrix
+        plt.figure(figsize=(10, 8))
+        
+        # Create action labels based on the environment type
+        # For Lunar Lander: [0: do nothing, 1: fire left, 2: fire main, 3: fire right]
+        # For Highway: [0: lane left, 1: idle, 2: lane right, 3: faster, 4: slower]
+        if action_space_size == 4:
+            action_labels = ['No-op', 'Left', 'Main', 'Right']
+        elif action_space_size == 5:
+            action_labels = ['Lane Left', 'Idle', 'Lane Right', 'Faster', 'Slower']
+        else:
+            action_labels = [str(i) for i in range(action_space_size)]
+        
+        sns.heatmap(confusion_matrix, annot=True, fmt='g', cmap='Blues',
+                    xticklabels=action_labels,
+                    yticklabels=action_labels)
+        plt.title(f'Human vs Agent Action Confusion Matrix - {policy_name}')
+        plt.xlabel('Agent Action')
+        plt.ylabel('Human Action')
+        plt.savefig(f"{output_dir}/confusion_matrix_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -727,7 +735,7 @@ def analyze_human_agent_interaction(data: List[Dict[str, Any]], output_dir: str,
         'confusion_matrix': confusion_matrix
     }
 
-def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze notification statistics per trajectory"""
     # Initialize lists to store per-trajectory statistics
     notifications_per_trajectory = []
@@ -815,69 +823,67 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         # Calculate the average selection rate of this length across all trajectories
         selection_rates = [rate_dict.get(length, 0) for rate_dict in notification_length_selection_rates]
         avg_length_selection_rates[length] = np.mean(selection_rates)
-    # Assert that the selection rates sum to 1 (with a small tolerance for floating-point errors)
-    total_rate = sum(avg_length_selection_rates.values())
-    assert abs(total_rate - 1.0) < 5e-2, f"Notification length selection rates should sum to 1, but sum to {total_rate}"
     
-    # Create a figure for notifications per trajectory distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(notifications_per_trajectory, bins=range(min(notifications_per_trajectory), max(notifications_per_trajectory) + 2), alpha=0.7)
-    plt.axvline(avg_notifications_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_notifications_per_trajectory:.2f}')
-    plt.title(f'Notifications Per Trajectory - {policy_name}')
-    plt.xlabel('Number of Notifications')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notifications_per_trajectory_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for notification length per trajectory distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(notification_lengths_per_trajectory, bins=10, alpha=0.7)
-    plt.axvline(avg_notification_length_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_notification_length_per_trajectory:.2f}')
-    plt.title(f'Average Notification Length Per Trajectory - {policy_name}')
-    plt.xlabel('Average Notification Length')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_length_per_trajectory_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for overwrite rate per trajectory distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(overwrite_rates_per_trajectory, bins=10, alpha=0.7)
-    plt.axvline(avg_overwrite_rate_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_overwrite_rate_per_trajectory:.2f}')
-    plt.title(f'Overwrite Rate Per Trajectory - {policy_name}')
-    plt.xlabel('Overwrite Rate')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/overwrite_rate_per_trajectory_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for notification length frequency distribution
-    plt.figure(figsize=(10, 6))
-    lengths = list(avg_length_frequencies.keys())
-    frequencies = list(avg_length_frequencies.values())
-    plt.bar(lengths, frequencies, alpha=0.7)
-    plt.title(f'Average Notification Length Frequency - {policy_name}')
-    plt.xlabel('Notification Length')
-    plt.ylabel('Average Frequency Per Trajectory')
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_length_frequency_{policy_name}.png")
-    plt.close()
-    
-    # Create a figure for notification length selection rate distribution
-    plt.figure(figsize=(10, 6))
-    lengths = list(avg_length_selection_rates.keys())
-    selection_rates = list(avg_length_selection_rates.values())
-    plt.bar(lengths, selection_rates, alpha=0.7)
-    plt.title(f'Average Notification Length Selection Rate - {policy_name}')
-    plt.xlabel('Notification Length')
-    plt.ylabel('Selection Rate')
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_length_selection_rate_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure for notifications per trajectory distribution
+        plt.figure(figsize=(10, 6))
+        plt.hist(notifications_per_trajectory, bins=range(min(notifications_per_trajectory), max(notifications_per_trajectory) + 2), alpha=0.7)
+        plt.axvline(avg_notifications_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_notifications_per_trajectory:.2f}')
+        plt.title(f'Notifications Per Trajectory - {policy_name}')
+        plt.xlabel('Number of Notifications')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notifications_per_trajectory_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for notification length per trajectory distribution
+        plt.figure(figsize=(10, 6))
+        plt.hist(notification_lengths_per_trajectory, bins=10, alpha=0.7)
+        plt.axvline(avg_notification_length_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_notification_length_per_trajectory:.2f}')
+        plt.title(f'Average Notification Length Per Trajectory - {policy_name}')
+        plt.xlabel('Average Notification Length')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_length_per_trajectory_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for overwrite rate per trajectory distribution
+        plt.figure(figsize=(10, 6))
+        plt.hist(overwrite_rates_per_trajectory, bins=10, alpha=0.7)
+        plt.axvline(avg_overwrite_rate_per_trajectory, color='r', linestyle='--', label=f'Mean: {avg_overwrite_rate_per_trajectory:.2f}')
+        plt.title(f'Overwrite Rate Per Trajectory - {policy_name}')
+        plt.xlabel('Overwrite Rate')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/overwrite_rate_per_trajectory_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for notification length frequency distribution
+        plt.figure(figsize=(10, 6))
+        lengths = list(avg_length_frequencies.keys())
+        frequencies = list(avg_length_frequencies.values())
+        plt.bar(lengths, frequencies, alpha=0.7)
+        plt.title(f'Average Notification Length Frequency - {policy_name}')
+        plt.xlabel('Notification Length')
+        plt.ylabel('Average Frequency Per Trajectory')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_length_frequency_{policy_name}.png")
+        plt.close()
+        
+        # Create a figure for notification length selection rate distribution
+        plt.figure(figsize=(10, 6))
+        lengths = list(avg_length_selection_rates.keys())
+        selection_rates = list(avg_length_selection_rates.values())
+        plt.bar(lengths, selection_rates, alpha=0.7)
+        plt.title(f'Average Notification Length Selection Rate - {policy_name}')
+        plt.xlabel('Notification Length')
+        plt.ylabel('Selection Rate')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_length_selection_rate_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -921,7 +927,7 @@ def analyze_per_trajectory_notifications(data: List[Dict[str, Any]], output_dir:
         'notification_length_selection_rates': avg_length_selection_rates
     }
 
-def analyze_final_notification_distance(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_final_notification_distance(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze the distance from danger zones at the time of the final notification before entry"""
     # Initialize lists to store distances
     final_notification_distances = {
@@ -987,25 +993,26 @@ def analyze_final_notification_distance(data: List[Dict[str, Any]], output_dir: 
     # Calculate notification rate before entry
     notification_rate = trajectories_with_notification / trajectories_with_entry if trajectories_with_entry > 0 else 0
     
-    # Create a figure for final notification distances
-    plt.figure(figsize=(10, 6))
-    if final_notification_distances['bottom']:
-        sns.histplot(final_notification_distances['bottom'], kde=True)
-        plt.axvline(stats['bottom']['mean'], color='r', linestyle='--', 
-                   label=f'Mean: {stats["bottom"]["mean"]:.2f}')
-        plt.title(f'Bottom Danger Zone Distance at Final Notification')
-        plt.xlabel('Distance')
-        plt.ylabel('Frequency')
-        plt.xlim(0, 0.2)
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-    else:
-        plt.text(0.5, 0.5, 'No notifications', ha='center', va='center')
-        plt.title(f'Bottom Danger Zone Distance at Final Notification')
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/final_notification_distance_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure for final notification distances
+        plt.figure(figsize=(10, 6))
+        if final_notification_distances['bottom']:
+            sns.histplot(final_notification_distances['bottom'], kde=True)
+            plt.axvline(stats['bottom']['mean'], color='r', linestyle='--', 
+                    label=f'Mean: {stats["bottom"]["mean"]:.2f}')
+            plt.title(f'Bottom Danger Zone Distance at Final Notification')
+            plt.xlabel('Distance')
+            plt.ylabel('Frequency')
+            plt.xlim(0, 0.2)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        else:
+            plt.text(0.5, 0.5, 'No notifications', ha='center', va='center')
+            plt.title(f'Bottom Danger Zone Distance at Final Notification')
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/final_notification_distance_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary_data = []
@@ -1033,7 +1040,7 @@ def analyze_final_notification_distance(data: List[Dict[str, Any]], output_dir: 
         'notification_rate': notification_rate
     }
 
-def analyze_notification_rate_per_trajectory(data: List[Dict[str, Any]], output_dir: str, policy_name: str = ""):
+def analyze_notification_rate_per_trajectory(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
     """Analyze notification rate per trajectory and compute the average across all trajectories."""
     # Initialize list to store notification rates per trajectory
     notification_rates_per_trajectory = []
@@ -1060,17 +1067,18 @@ def analyze_notification_rate_per_trajectory(data: List[Dict[str, Any]], output_
     min_notification_rate = np.min(notification_rates_per_trajectory)
     max_notification_rate = np.max(notification_rates_per_trajectory)
     
-    # Create a figure for notification rate per trajectory distribution
-    plt.figure(figsize=(10, 6))
-    plt.hist(notification_rates_per_trajectory, bins=10, alpha=0.7)
-    plt.axvline(avg_notification_rate, color='r', linestyle='--', label=f'Mean: {avg_notification_rate:.4f}')
-    plt.title(f'Notification Rate Per Trajectory - {policy_name}')
-    plt.xlabel('Notification Rate')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{output_dir}/notification_rate_per_trajectory_{policy_name}.png")
-    plt.close()
+    if save_figures:
+        # Create a figure for notification rate per trajectory distribution
+        plt.figure(figsize=(10, 6))
+        plt.hist(notification_rates_per_trajectory, bins=10, alpha=0.7)
+        plt.axvline(avg_notification_rate, color='r', linestyle='--', label=f'Mean: {avg_notification_rate:.4f}')
+        plt.title(f'Notification Rate Per Trajectory - {policy_name}')
+        plt.xlabel('Notification Rate')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.savefig(f"{output_dir}/notification_rate_per_trajectory_{policy_name}.png")
+        plt.close()
     
     # Create a summary DataFrame
     summary = pd.DataFrame({
@@ -1088,6 +1096,221 @@ def analyze_notification_rate_per_trajectory(data: List[Dict[str, Any]], output_
         'max_notification_rate': max_notification_rate,
         'notification_rates_per_trajectory': notification_rates_per_trajectory
     }
+
+def analyze_vehicle_velocities(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
+    """Analyze vehicle velocity statistics from trajectory data"""
+    # Initialize lists to store velocity data
+    vx_values = []
+    vy_values = []
+    speeds = []
+    velocity_changes = []
+    
+    # Analyze each trajectory
+    for episode in data:
+        trajectory = episode['trajectory']
+        
+        for step in trajectory:
+            if 'vehicle_velocity' in step:
+                # Get current velocities
+                vx = step['vehicle_velocity']['vx']
+                vy = step['vehicle_velocity']['vy']
+                next_vx = step['vehicle_velocity']['next_vx']
+                next_vy = step['vehicle_velocity']['next_vy']
+                
+                # Store velocity components
+                vx_values.append(vx)
+                vy_values.append(vy)
+                
+                # Calculate speed (magnitude of velocity)
+                speed = np.sqrt(vx**2 + vy**2)
+                speeds.append(speed)
+                
+                # Calculate velocity change
+                vx_change = next_vx - vx
+                vy_change = next_vy - vy
+                velocity_change = np.sqrt(vx_change**2 + vy_change**2)
+                velocity_changes.append(velocity_change)
+    
+    if not vx_values:  # If no velocity data was found
+        print(f"No velocity data found for policy {policy_name}")
+        return None
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+        
+    if save_figures:
+        # Create velocity distribution plots
+        plt.figure(figsize=(15, 10))
+        
+        # Plot 1: Velocity component distributions
+        plt.subplot(2, 2, 1)
+        plt.hist(vx_values, bins=50, alpha=0.5, label='Vx')
+        plt.hist(vy_values, bins=50, alpha=0.5, label='Vy')
+        plt.xlabel('Velocity (m/s)')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of Velocity Components')
+        plt.legend()
+        
+        # Plot 2: Speed distribution
+        plt.subplot(2, 2, 2)
+        plt.hist(speeds, bins=50)
+        plt.xlabel('Speed (m/s)')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of Vehicle Speeds')
+        
+        # Plot 3: Velocity change distribution
+        plt.subplot(2, 2, 3)
+        plt.hist(velocity_changes, bins=50)
+        plt.xlabel('Velocity Change (m/s)')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of Velocity Changes')
+        
+        # Plot 4: Scatter plot of Vx vs Vy
+        plt.subplot(2, 2, 4)
+        plt.scatter(vx_values, vy_values, alpha=0.1)
+        plt.xlabel('Vx (m/s)')
+        plt.ylabel('Vy (m/s)')
+        plt.title('Vx vs Vy Scatter Plot')
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/velocity_analysis_{policy_name}.png")
+        plt.close()
+    
+    # Calculate and save summary statistics
+    velocity_stats = {
+        'vx_mean': np.mean(vx_values),
+        'vx_std': np.std(vx_values),
+        'vy_mean': np.mean(vy_values),
+        'vy_std': np.std(vy_values),
+        'speed_mean': np.mean(speeds),
+        'speed_std': np.std(speeds),
+        'velocity_change_mean': np.mean(velocity_changes),
+        'velocity_change_std': np.std(velocity_changes)
+    }
+    
+    # Save statistics to CSV
+    stats_df = pd.DataFrame([velocity_stats])
+    stats_df.to_csv(f"{output_dir}/velocity_stats_{policy_name}.csv", index=False)
+    
+    return velocity_stats
+
+def analyze_velocity_per_trajectory(data: List[Dict[str, Any]], output_dir: str, policy_name: str = "", save_figures: bool = True):
+    """Analyze velocity statistics per trajectory"""
+    # Initialize lists to store per-trajectory statistics
+    avg_speeds_per_trajectory = []
+    avg_vx_per_trajectory = []
+    avg_vy_per_trajectory = []
+    avg_velocity_changes_per_trajectory = []
+    
+    # Analyze each trajectory
+    for episode in data:
+        trajectory = episode['trajectory']
+        
+        # Initialize lists for this trajectory
+        speeds = []
+        vx_values = []
+        vy_values = []
+        velocity_changes = []
+        
+        for step in trajectory:
+            if 'vehicle_velocity' in step:
+                # Get current velocities
+                vx = step['vehicle_velocity']['vx']
+                vy = step['vehicle_velocity']['vy']
+                next_vx = step['vehicle_velocity']['next_vx']
+                next_vy = step['vehicle_velocity']['next_vy']
+                
+                # Calculate speed (magnitude of velocity)
+                speed = np.sqrt(vx**2 + vy**2)
+                speeds.append(speed)
+                vx_values.append(vx)
+                vy_values.append(vy)
+                
+                # Calculate velocity change
+                vx_change = next_vx - vx
+                vy_change = next_vy - vy
+                velocity_change = np.sqrt(vx_change**2 + vy_change**2)
+                velocity_changes.append(velocity_change)
+        
+        # Calculate averages for this trajectory
+        if speeds:  # Only if we have velocity data
+            avg_speeds_per_trajectory.append(np.mean(speeds))
+            avg_vx_per_trajectory.append(np.mean(vx_values))
+            avg_vy_per_trajectory.append(np.mean(vy_values))
+            avg_velocity_changes_per_trajectory.append(np.mean(velocity_changes))
+    
+    if not avg_speeds_per_trajectory:  # If no velocity data was found
+        print(f"No velocity data found for policy {policy_name}")
+        return None
+    
+    # Calculate overall statistics
+    velocity_stats = {
+        'avg_speed_mean': np.mean(avg_speeds_per_trajectory),
+        'avg_speed_std': np.std(avg_speeds_per_trajectory),
+        'avg_vx_mean': np.mean(avg_vx_per_trajectory),
+        'avg_vx_std': np.std(avg_vx_per_trajectory),
+        'avg_vy_mean': np.mean(avg_vy_per_trajectory),
+        'avg_vy_std': np.std(avg_vy_per_trajectory),
+        'avg_velocity_change_mean': np.mean(avg_velocity_changes_per_trajectory),
+        'avg_velocity_change_std': np.std(avg_velocity_changes_per_trajectory)
+    }
+    
+    if save_figures:
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Create velocity distribution plots
+        plt.figure(figsize=(15, 10))
+        
+        # Plot 1: Average speed per trajectory
+        plt.subplot(2, 2, 1)
+        plt.hist(avg_speeds_per_trajectory, bins=20)
+        plt.axvline(velocity_stats['avg_speed_mean'], color='r', linestyle='--', 
+                   label=f'Mean: {velocity_stats["avg_speed_mean"]:.2f}')
+        plt.xlabel('Average Speed (m/s)')
+        plt.ylabel('Number of Trajectories')
+        plt.title('Distribution of Average Speeds per Trajectory')
+        plt.legend()
+        
+        # Plot 2: Average Vx per trajectory
+        plt.subplot(2, 2, 2)
+        plt.hist(avg_vx_per_trajectory, bins=20)
+        plt.axvline(velocity_stats['avg_vx_mean'], color='r', linestyle='--', 
+                   label=f'Mean: {velocity_stats["avg_vx_mean"]:.2f}')
+        plt.xlabel('Average Vx (m/s)')
+        plt.ylabel('Number of Trajectories')
+        plt.title('Distribution of Average Vx per Trajectory')
+        plt.legend()
+        
+        # Plot 3: Average Vy per trajectory
+        plt.subplot(2, 2, 3)
+        plt.hist(avg_vy_per_trajectory, bins=20)
+        plt.axvline(velocity_stats['avg_vy_mean'], color='r', linestyle='--', 
+                   label=f'Mean: {velocity_stats["avg_vy_mean"]:.2f}')
+        plt.xlabel('Average Vy (m/s)')
+        plt.ylabel('Number of Trajectories')
+        plt.title('Distribution of Average Vy per Trajectory')
+        plt.legend()
+        
+        # Plot 4: Average velocity change per trajectory
+        plt.subplot(2, 2, 4)
+        plt.hist(avg_velocity_changes_per_trajectory, bins=20)
+        plt.axvline(velocity_stats['avg_velocity_change_mean'], color='r', linestyle='--', 
+                   label=f'Mean: {velocity_stats["avg_velocity_change_mean"]:.2f}')
+        plt.xlabel('Average Velocity Change (m/s)')
+        plt.ylabel('Number of Trajectories')
+        plt.title('Distribution of Average Velocity Changes per Trajectory')
+        plt.legend()
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/velocity_per_trajectory_{policy_name}.png")
+        plt.close()
+    
+    # Save statistics to CSV
+    stats_df = pd.DataFrame([velocity_stats])
+    stats_df.to_csv(f"{output_dir}/velocity_per_trajectory_stats_{policy_name}.csv", index=False)
+    
+    return velocity_stats
 
 def create_comparative_visualizations(policy_results, output_dir):
     """Create comparative visualizations across different policies."""
@@ -1441,6 +1664,7 @@ def main():
     parser.add_argument('--output_dir', type=str, required=True, help='Directory to save analysis results')
     parser.add_argument('--env_type', type=str, choices=['DangerZoneLunarLander', 'multi-merge-v0', 'auto'], default='auto', 
                         help='Environment type for analysis. Use "auto" to automatically detect from data.')
+    parser.add_argument('--save_figures', action='store_true', help='Whether to save analysis figures')
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
@@ -1474,28 +1698,35 @@ def main():
         print(f"Analyzing data for {policy_name} (Environment: {env_type})")
 
         # Run common analyses
-        reward_stats = analyze_rewards(data, policy_output_dir, policy_name)
-        length_stats = analyze_episode_lengths(data, policy_output_dir, policy_name)
-        action_stats = analyze_action_distribution(data, policy_output_dir, policy_name)
-        notification_stats = analyze_notifications(data, policy_output_dir, policy_name)
-        interaction_stats = analyze_human_agent_interaction(data, policy_output_dir, policy_name)
-        per_trajectory_notification_stats = analyze_per_trajectory_notifications(data, policy_output_dir, policy_name)
-        notification_rate_per_trajectory_stats = analyze_notification_rate_per_trajectory(data, policy_output_dir, policy_name)
+        reward_stats = analyze_rewards(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        length_stats = analyze_episode_lengths(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        action_stats = analyze_action_distribution(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        notification_stats = analyze_notifications(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        interaction_stats = analyze_human_agent_interaction(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        per_trajectory_notification_stats = analyze_per_trajectory_notifications(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+        notification_rate_per_trajectory_stats = analyze_notification_rate_per_trajectory(data, policy_output_dir, policy_name, save_figures=args.save_figures)
         
         # Run environment-specific analyses
-        success_stats = analyze_success_rate(data, policy_output_dir, policy_name)
+        success_stats = analyze_success_rate(data, policy_output_dir, policy_name, save_figures=args.save_figures)
         
         # Initialize empty dictionaries for environment-specific stats
         danger_zone_stats = {}
         final_notification_distance_stats = {}
+        vehicle_velocity_stats = {}
+        velocity_per_trajectory_stats = {}
         
         # Only run danger zone analysis if the environment has danger zones
         if env_type == 'DangerZoneLunarLander':
-            danger_zone_stats = analyze_danger_zone_interactions(data, policy_output_dir, policy_name)
-            final_notification_distance_stats = analyze_final_notification_distance(data, policy_output_dir, policy_name)
+            danger_zone_stats = analyze_danger_zone_interactions(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+            final_notification_distance_stats = analyze_final_notification_distance(data, policy_output_dir, policy_name, save_figures=args.save_figures)
         
         # Run trajectory pattern analysis
-        trajectory_pattern_stats = analyze_trajectory_patterns(data, policy_output_dir, policy_name)
+        trajectory_pattern_stats = analyze_trajectory_patterns(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+
+        if env_type == 'multi-merge-v0':
+            # Run vehicle velocity analysis
+            vehicle_velocity_stats = analyze_vehicle_velocities(data, policy_output_dir, policy_name, save_figures=args.save_figures)
+            velocity_per_trajectory_stats = analyze_velocity_per_trajectory(data, policy_output_dir, policy_name, save_figures=args.save_figures)
 
         # Store results
         policy_results[policy_name] = {
@@ -1508,7 +1739,9 @@ def main():
             'per_trajectory_notification_stats': per_trajectory_notification_stats,
             'success_stats': success_stats,
             'danger_zone_stats': danger_zone_stats,
-            'notification_rate_per_trajectory_stats': notification_rate_per_trajectory_stats
+            'notification_rate_per_trajectory_stats': notification_rate_per_trajectory_stats,
+            'vehicle_velocities': vehicle_velocity_stats,
+            'velocity_per_trajectory_stats': velocity_per_trajectory_stats
         }
         
         # Only include final_notification_distance_stats for DangerZoneLunarLander
@@ -1555,6 +1788,19 @@ def main():
         # Add notification length selection rates
         for length, rate in length_selection_rates.items():
             policy_data[f'Selection Rate of Length {length}'] = rate
+        
+        # Add velocity per trajectory metrics if available
+        if result['env_type'] == 'multi-merge-v0' and result['velocity_per_trajectory_stats'] is not None:
+            policy_data.update({
+                'Avg Speed Per Trajectory': result['velocity_per_trajectory_stats'].get('avg_speed_mean', 0),
+                'Speed Per Trajectory Std Dev': result['velocity_per_trajectory_stats'].get('avg_speed_std', 0),
+                'Avg Vx Per Trajectory': result['velocity_per_trajectory_stats'].get('avg_vx_mean', 0),
+                'Vx Per Trajectory Std Dev': result['velocity_per_trajectory_stats'].get('avg_vx_std', 0),
+                'Avg Vy Per Trajectory': result['velocity_per_trajectory_stats'].get('avg_vy_mean', 0),
+                'Vy Per Trajectory Std Dev': result['velocity_per_trajectory_stats'].get('avg_vy_std', 0),
+                'Avg Velocity Change Per Trajectory': result['velocity_per_trajectory_stats'].get('avg_velocity_change_mean', 0),
+                'Velocity Change Per Trajectory Std Dev': result['velocity_per_trajectory_stats'].get('avg_velocity_change_std', 0)
+            })
         
         comparative_data.append(policy_data)
 

@@ -163,7 +163,7 @@ class BaseEvaluator:
         self.visualize = visualize
         
         envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
-        agent = model(envs, self.args).to(device)
+        agent = model(self.args, envs.single_observation_space, envs.single_action_space, self.args.noti_action_length).to(device)
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
@@ -174,9 +174,9 @@ class BaseEvaluator:
 
         human_agent = None
         if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
-            human_agent = HumanAgent(envs, self.args, device)
+            human_agent = HumanAgent(envs, self.args, device, num_envs=self.num_envs)
         elif self.args.human_agent_type is not None and self.args.human_agent_type == "IDM":
-            human_agent = HumanDriverAgent(envs, self.args, device)
+            human_agent = HumanDriverAgent(envs, self.args, device, num_envs=self.num_envs)
 
         obs, infos = envs.reset()
         episodic_returns = []
@@ -210,7 +210,6 @@ class BaseEvaluator:
                 next_agent_obs = torch.Tensor(obs).to(device)
 
             agent_actions, _, _, _ = agent.get_action_and_value(torch.Tensor(next_agent_obs).to(device))
-            self.next_agent_obs[step] = next_agent_obs
             self.full_next_agent_obs[step] = next_agent_obs
             # Get human action if applicable
             human_action = None
@@ -306,7 +305,7 @@ class LSTMEvaluator(BaseEvaluator):
         self.visualize = visualize
         
         envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
-        agent = model(envs, self.args).to(device)
+        agent = model(self.args, envs.single_observation_space, envs.single_action_space, self.args.noti_action_length).to(device)
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 

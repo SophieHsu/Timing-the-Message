@@ -304,10 +304,10 @@ class NotiLunarLander(gym.Env, EzPickle):
                 5.0,
                 1.0,
                 1.0,
-                5.0,
-                5.0,
-                5.0,
-                5.0
+                3.0,
+                3.0,
+                3.0,
+                3.0
             ]
         ).astype(np.float32)
 
@@ -1705,20 +1705,20 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         info = {}
 
         # cost for speaking
-        noti_penalty = -3 #-0.3
+        noti_penalty = -1 #-0.3
         if noti_action[0] == 2:
             reward += noti_penalty
             self.reward_components["noti_penalty"] = noti_penalty
         else:
             self.reward_components["noti_penalty"] = 0
 
-        # value for longer notification
-        noti_content_reward = 2
-        if noti_action[0] == 2:
-            self.reward_components["noti_content_reward"] = (noti_action[2]-2)+noti_content_reward # reward length 5 with 2; and length 2 with 0
-        else:
-            self.reward_components["noti_content_reward"] = 0
-        reward += self.reward_components["noti_content_reward"]
+        # # value for longer notification
+        # noti_content_reward = 2
+        # if noti_action[0] == 2:
+        #     self.reward_components["noti_content_reward"] = (noti_action[2]-2)+noti_content_reward # reward length 5 with 2; and length 2 with 0
+        # else:
+        #     self.reward_components["noti_content_reward"] = 0
+        # reward += self.reward_components["noti_content_reward"]
         
         shaping = (
             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
@@ -1738,7 +1738,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         )  # less fuel spent is better, about -30 for heuristic landing
         reward -= s_power * 0.03
 
-        # self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
+        self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
 
         # Danger zone penalties
         danger_zone_penalty = -30 * (

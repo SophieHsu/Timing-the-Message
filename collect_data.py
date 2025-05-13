@@ -191,7 +191,14 @@ def main():
                                 'vehicles': [str(v) for v in road.vehicles],
                                 'vehicle_count': len(road.vehicles)
                             }
-                    
+                        
+                        # Add vehicle velocity information
+                        trajectory_step['vehicle_velocity'] = {
+                            'vx': obs[env_idx][0][3],  # vx is at index 3 in the observation
+                            'vy': obs[env_idx][0][4],  # vy is at index 4 in the observation
+                            'next_vx': next_obs[env_idx][0][3],
+                            'next_vy': next_obs[env_idx][0][4]
+                        }
                     # Add to episode data
                     episode_data[env_idx].append(trajectory_step)
                     

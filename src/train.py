@@ -22,6 +22,7 @@ from src.agents.humans import HumanAgent, HumanDriverAgent, HumanChefAgent
 from src.agents.heuristic import HeuristicAgent
 from src.utils.training import BaseTrainer, LSTMTrainer, TransformerTrainer, HeuristicTrainer, BlockingTrainer, CookingLSTMTrainer
 from src.utils.util import make_env, make_steakhouse_env
+os.environ["OFFSCREEN_RENDERING"] = "1"
 
 def set_rendering_mode(headless=True):
     """Set the rendering mode to either headless or local display"""
@@ -158,7 +159,8 @@ def main():
     run_name = f"{args.env_id.split('/')[-1]}_{args.exp_name}_{args.learning_rate}_{args.seed}_{int(time.time())}"
     
     # Set rendering mode based on whether we want local display or headless
-    set_rendering_mode(headless=not args.render)  # Use args.render to determine mode
+    if args.env_id == "steakhouse":
+        set_rendering_mode(headless=not args.render)  # Use args.render to determine mode
     
     # Setup logging
     setup_wandb(args, run_name)
