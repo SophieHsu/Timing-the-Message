@@ -8,7 +8,7 @@ class Args:
     seed: int = 1
     torch_deterministic: bool = True
     device: str = None
-    cuda: bool = False
+    cuda: bool = True
     cuda_device: str = "cuda:1"
     track: bool = True
     wandb_project_name: str = "timing"
@@ -31,10 +31,12 @@ class Args:
     steakhouse_one_dim_obs_dim: int = 13
     max_episode_steps: int = 65
     layout_random: bool = False
-    
+    eval_w_rollout: bool = False
+    human_rollout_reset: bool = False
+
     # Agent settings
     agent_type: str = "lstm"  # Options: "mlp", "lstm", "transformer", "heuristic"
-    trainer_type: str = "cooking"  # Options: "base", "lstm", "transformer", "heuristic", "blocking", "cooking"
+    trainer_type: str = "base"  # Options: "base", "lstm", "transformer", "heuristic", "blocking", "cooking"
     use_condition_head: bool = True
     noti_action_length: int = None # determined by the environment
     agent_obs_mode: str = "history" # Options: "history"
@@ -50,10 +52,11 @@ class Args:
     block_rollout: bool = False
     overfit: bool = False
     dense_reward: bool = False
+    delta_reward_weight: float = 0.1 # 0.01
     non_completion_penalty: float = 0
     
     # Human agent settings
-    human_agent_type: str = "chef" # Options: "None", "mlp", "lstm", "transformer", "IDM", "chef"
+    human_agent_type: str = "None" # Options: "None", "mlp", "lstm", "transformer", "IDM", "chef"
     human_agent_run_id: str = "xlq34dpt"
     human_agent_path: str = None
     human_utterance_memory_length: int = 10
@@ -78,6 +81,9 @@ class Args:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = None
+    norm_obs: bool = False
+    norm_reward: bool = False
+    anneal_ent_coef: bool = False
     
     # Transformer specific settings
     context_len: int = 10
@@ -91,7 +97,7 @@ class Args:
     lstm_num_layers: int = 1
     
     # MLP specific settings
-    mlp_hidden_dims: list = None
+    mlp_hidden_dims: list = None # [64, 64]
 
     # Feature extractor settings
     feature_extractor: str = "none" # Options: "highway", "none", "steakhouse"

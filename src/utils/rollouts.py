@@ -12,6 +12,7 @@ from steakhouse_ai_py.agents.steak_agent import SteakLimitVisionHumanModel
 from steakhouse_ai_py.agents.notifier_agent import LangStayAgent
 from src.agents.humans import HumanChefAgent
 from src.agents.lstm import NotifierLSTMAgent
+from stable_baselines3.common.running_mean_std import RunningMeanStd
 
 # Add this at the module level, outside any class
 _ray_initialized = False
@@ -49,6 +50,7 @@ class BaseRolloutCollector:
         self.num_envs = num_envs if num_envs is not None else args.num_envs
         self.agent_single_action_space = agent_single_action_space
         self.initialize_storage()
+        self.obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
 
     def initialize_storage(self):
         observation_space_shape = self.envs.single_observation_space if isinstance(self.envs.single_observation_space, tuple) else self.envs.single_observation_space.shape
@@ -86,6 +88,7 @@ class BaseRolloutCollector:
 
     def collect_rollouts(self, global_step):
         self.initialize_storage()
+        self.obs_rms = RunningMeanStd(shape=self.envs.single_observation_space.shape)
         next_obs, infos = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(self.device)
         
@@ -98,8 +101,10 @@ class BaseRolloutCollector:
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
+                self.obs_rms.update(next_obs.cpu().numpy())    # obs shape: (num_envs, *obs_dim)
+                next_agent_obs = ((next_obs - torch.tensor(self.obs_rms.mean, device=self.device)) / torch.sqrt(torch.tensor(self.obs_rms.var + 1e-8, device=self.device))).float()
                 if self.human_agent is not None:
-                    next_agent_obs = self.compute_next_agent_obs(next_obs, infos)
+                    next_agent_obs = self.compute_next_agent_obs(next_agent_obs, infos)
                 else:
                     next_agent_obs = next_obs
                 self.next_agent_obs[step] = next_agent_obs
@@ -115,11 +120,11 @@ class BaseRolloutCollector:
                 full_actions = np.concatenate([action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
             else:
                 # Create action array more efficiently
-                action_np = action.cpu().numpy()
-                # Pre-allocate the full action array with zeros
-                full_actions = np.zeros((self.num_envs, self.envs.envs[0].unwrapped.noti_action_length+2), dtype=np.float32)
-                # Only set the last element (the actual action)
-                full_actions[:, self.envs.envs[0].unwrapped.noti_action_length] = action_np.reshape(-1)
+                full_actions = action.cpu().numpy()
+                # # Pre-allocate the full action array with zeros
+                # full_actions = np.zeros((self.num_envs, self.envs.envs[0].unwrapped.noti_action_length+2), dtype=np.float32)
+                # # Only set the last element (the actual action)
+                # full_actions[:, self.envs.envs[0].unwrapped.noti_action_length] = action_np.reshape(-1)
             
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
@@ -138,9 +143,13 @@ class BaseRolloutCollector:
                 done_indices = torch.where(next_done)[0]
                 for i in done_indices:
                     i = i.item()  # Convert to Python int for indexing
-                    # print(f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}")
-                    self.writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
-                    self.writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
+                    if self.args.human_rollout_reset:
+                        self.human_agent.reset(i)
+
+                    if self.writer is not None:
+                        # print(f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}")
+                        self.writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
+                        self.writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -872,11 +881,12 @@ class CookingLSTMRolloutWorker:
                 reward += env_reward
                 reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))
             reward -= args.agent_step_penalty
-            noti_penalty, wrong_item = self.agent.notification_reward(next_state, infos['utterance'][0], dense_reward=args.dense_reward)
+            noti_penalty, wrong_item, delta_reward = self.agent.notification_reward(next_state, infos['utterance'][0], dense_reward=args.dense_reward)
             if wrong_item and self.args.early_termination:
                 next_done = True # early termination
                 reward -= self.args.non_completion_penalty
             reward += noti_penalty * args.noti_penalty_weight
+            reward += delta_reward * args.delta_reward_weight
             if info["utterance"][0] == 2:
                 reward -= self.args.new_noti_penalty
             # reward += (sum(info["sparse_r_by_agent"]) + sum(info["shaped_r_by_agent"]))

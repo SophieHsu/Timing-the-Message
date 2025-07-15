@@ -126,7 +126,7 @@ def setup_wandb(args: Args, run_name: str) -> None:
             config=vars(args),
             name=run_name,
             monitor_gym=False,
-            save_code=True,
+            save_code=False,
         )
         wandb.config.update({"filepath": wandb.run.dir})
 
@@ -177,10 +177,11 @@ def main():
     envs = setup_environment(args)
 
     # Update args from envs
-    if args.env_id != "steakhouse":
-        args.noti_action_length = envs.envs[0].unwrapped.noti_action_length
-    else:
-        args.noti_action_length = envs.noti_action_length
+    if args.human_agent_type is not None and args.human_agent_type != "None":
+        if args.env_id != "steakhouse" and args.env_id != "HumanAgentLunarLander":
+            args.noti_action_length = envs.envs[0].unwrapped.noti_action_length
+        else:
+            args.noti_action_length = envs.noti_action_length
 
     # Create human agent if specified
     human_agent = None

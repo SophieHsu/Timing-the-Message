@@ -170,25 +170,25 @@ def plot_xy_trajectory_highway(trajectory_data: List[Dict[str, Any]], episode_id
     if no_event_indices:
         plt.scatter([positions_x[i] for i in no_event_indices],
                   [positions_y[i] for i in no_event_indices],
-                  color='gray', alpha=0.5, label='No Event')
+                  color='gray', alpha=0.5, s=100, label='No Event')
     
     # Notification points (blue)
     notification_indices = [i for i, t in enumerate(agent_actions_type) if t > 1]
     if notification_indices:
         plt.scatter([positions_x[i] for i in notification_indices],
                   [positions_y[i] for i in notification_indices],
-                  color='blue', alpha=0.7, label='Notification')
+                  color='blue', alpha=0.7, marker='x', s=100, label='Notification')
     
     # Overwrite points (red)
     overwrite_indices = [i for i, o in enumerate(overwritten) if o]
     if overwrite_indices:
         plt.scatter([positions_x[i] for i in overwrite_indices],
                   [positions_y[i] for i in overwrite_indices],
-                  color='red', alpha=0.7, label='Overwrite')
+                  color='red', alpha=0.7, s=100, label='Overwrite')
     
     # Add start and end markers
-    plt.plot(positions_x[0], positions_y[0], 'go', markersize=10, label='Start')
-    plt.plot(positions_x[-1], positions_y[-1], 'ro', markersize=10, label='End')
+    plt.plot(positions_x[0], positions_y[0], 'go', markersize=15, alpha=0.7, label='Start')
+    plt.plot(positions_x[-1], positions_y[-1], 'ro', markersize=15, alpha=0.7, label='End')
     
     # Set plot limits with padding
     x_min, x_max = min(positions_x), max(positions_x)
@@ -548,7 +548,7 @@ def main():
             print(f"Selected episodes {episodes} for policy {args.policy_names[i]}")
     else:
         for i, data in enumerate(all_data):
-            episodes = list(range(5))
+            episodes = list(range(args.num_episodes))
             selected_episodes.append(episodes)
             print(f"Selected episodes {episodes} for policy {args.policy_names[i]}")
     

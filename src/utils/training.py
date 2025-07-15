@@ -8,6 +8,7 @@ import wandb
 import os
 import time
 import random
+from stable_baselines3.common.vec_env import VecNormalize
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,10 +29,17 @@ class BaseTrainer:
         self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = BaseEvaluator(args, run_name)
         self.human_agent = human_agent
+        self.current_ent_coef = self.args.ent_coef
 
     def _log_eval_metrics(self, episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step):
         """Helper function to log evaluation metrics to wandb."""
         # Log basic metrics
+        if self.args.eval_w_rollout:
+            wandb.log({
+                f"eval/episodic_mean_return": np.mean(episodic_returns),
+            }, step=global_step)
+            return
+        
         wandb.log({
             f"eval/episodic_mean_return": np.mean(episodic_returns),
             f"eval/notify_mean_count": np.mean(type2_counts),
@@ -69,7 +77,7 @@ class BaseTrainer:
         torch.backends.cudnn.deterministic = self.args.torch_deterministic
 
         # env setup
-        envs = gym.vector.SyncVectorEnv(
+        envs = gym.vector.AsyncVectorEnv(
             [make_env(self.args.env_id, i, self.args.capture_video, self.run_name) for i in range(self.args.num_envs)],
         )
 
@@ -77,7 +85,7 @@ class BaseTrainer:
 
         global_step = 0
         start_time = time.time()
-
+        mid_time = time.time()
         for iteration in range(1, self.args.num_iterations + 1):
             # Annealing the rate if instructed to do so.
             if self.args.anneal_lr:
@@ -85,7 +93,14 @@ class BaseTrainer:
                 lrnow = frac * self.args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
 
+            if self.args.anneal_ent_coef:
+                frac = 1.0 - (iteration - 1.0) / self.args.num_iterations
+                current_ent_coef = max(frac * self.args.ent_coef, 0.01)   # e.g. 0.1 → 0.01
+                self.current_ent_coef = current_ent_coef    
+
             results = self.rollout_collector.collect_rollouts(global_step)
+            # print(f"time taken to collect rollouts: {time.time() - mid_time}")
+            # mid_time = time.time()
             global_step = results["global_step"]
             
             # flatten the batch
@@ -140,7 +155,7 @@ class BaseTrainer:
                         v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                     entropy_loss = entropy.mean()
-                    loss = pg_loss - self.args.ent_coef * entropy_loss + v_loss * self.args.vf_coef
+                    loss = pg_loss - self.current_ent_coef * entropy_loss + v_loss * self.args.vf_coef
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -149,25 +164,40 @@ class BaseTrainer:
 
                 if self.args.target_kl is not None and approx_kl > self.args.target_kl:
                     break
-
+                    
             y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+            # print(f"time taken to optimize: {time.time() - mid_time}")
+            # mid_time = time.time()
 
             if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
                 torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                    f"{wandb.run.dir}/agent.pt",
-                    make_env,
-                    eval_episodes=3,
-                    model=self.agent.__class__,
-                    device="cpu",
-                    capture_video=True,
-                    visualize=False,
-                )
+
+                if self.args.eval_w_rollout:
+                    episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.rollout_version_evaluate(
+                        f"{wandb.run.dir}/agent.pt",
+                        make_env,
+                        eval_episodes=3,
+                        model=self.agent.__class__,
+                        device="cpu",
+                        capture_video=True,
+                        visualize=False,
+                    )
+                else:
+                    episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
+                        f"{wandb.run.dir}/agent.pt",
+                        make_env,
+                        eval_episodes=3,
+                        model=self.agent.__class__,
+                        device="cpu",
+                        capture_video=True,
+                        visualize=False,
+                    )
 
                 if os.path.exists(f"videos/{self.run_name}"):
                     for video_file in os.listdir(f"videos/{self.run_name}"):
@@ -178,6 +208,8 @@ class BaseTrainer:
                 
                 # Log evaluation metrics using the helper function
                 self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
+                # print(f"time taken to log eval metrics: {time.time() - mid_time}")
+                # mid_time = time.time()
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -190,6 +222,9 @@ class BaseTrainer:
             self.writer.add_scalar("losses/explained_variance", explained_var, global_step)
             print("SPS:", int(global_step / (time.time() - start_time)))
             self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+            
+            # print(f"time taken to record rewards: {time.time() - mid_time}")
+            # mid_time = time.time()
 
         envs.close()
         self.writer.close()
@@ -321,31 +356,31 @@ class LSTMTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                for fixed_objects_start_state_mode in range(0,3):
-                    try:
-                        episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                            f"{wandb.run.dir}/agent.pt",
-                            make_env,
-                            eval_episodes=3,
-                            model=self.agent.__class__,
-                            device="cpu" if not torch.cuda.is_available() else "cuda",
-                            capture_video=True,
-                            use_random_start_state=True,
-                            fixed_objects_start_state_mode=fixed_objects_start_state_mode,
-                        )
+                for fixed_objects_start_state_mode in range(0,10):
+                    # try:
+                    episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
+                        f"{wandb.run.dir}/agent.pt",
+                        make_env,
+                        eval_episodes=10,
+                        model=self.agent.__class__,
+                        device="cpu" if not torch.cuda.is_available() else "cuda",
+                        capture_video=True,
+                        use_random_start_state=True,
+                        fixed_objects_start_state_mode=fixed_objects_start_state_mode,
+                    )
 
-                        if os.path.exists(f"videos/{self.run_name}"):
-                            for video_file in os.listdir(f"videos/{self.run_name}"):
-                                if video_file.endswith(".mp4"):
-                                    wandb.log({
-                                        f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{fixed_objects_start_state_mode}.mp4")
-                                    }, step=global_step)
-                        
-                        # Log evaluation metrics using the helper function
-                        self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
-                    except Exception as e:
-                        print(e)
-                        pass
+                    if os.path.exists(f"videos/{self.run_name}"):
+                        for video_file in os.listdir(f"videos/{self.run_name}"):
+                            if video_file.endswith(".mp4"):
+                                wandb.log({
+                                    f"videos/eval_{video_file}": wandb.Video(f"videos/{self.run_name}/{fixed_objects_start_state_mode}.mp4")
+                                }, step=global_step)
+                    
+                    # Log evaluation metrics using the helper function
+                    self._log_eval_metrics(episodic_returns, type2_counts, overwritten_counts, action_length_varieties, global_step)
+                    # except Exception as e:
+                    #     print(e)
+                    #     pass
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             self.writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -379,7 +414,7 @@ class TransformerTrainer(BaseTrainer):
         device = torch.device("cuda" if torch.cuda.is_available() and self.args.cuda else "cpu")
 
         # env setup
-        envs = gym.vector.SyncVectorEnv(
+        envs = gym.vector.AsyncVectorEnv(
             [make_env(self.args.env_id, i, self.args.capture_video, self.run_name) for i in range(self.args.num_envs)],
         )
         # assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"

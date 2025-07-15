@@ -264,6 +264,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         
         # Add notification history
         self.noti_history = []
+        self.noti_history_text = []
+        self.current_notification = []
         self.max_history_size = 10  # Maximum number of past notifications to display
         self.curr_agent_action = None
         self.overwrite_flag = False
@@ -284,6 +286,15 @@ class NotiLunarLander(gym.Env, EzPickle):
                 -5.0,
                 -0.0,
                 -0.0,
+                # beam distances to danger zones
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
                 0.0,
                 0.0,
                 0.0,
@@ -304,10 +315,19 @@ class NotiLunarLander(gym.Env, EzPickle):
                 5.0,
                 1.0,
                 1.0,
-                3.0,
-                3.0,
-                3.0,
-                3.0
+                # beam distances to danger zones
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0
             ]
         ).astype(np.float32)
 
@@ -358,6 +378,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         
         # Reset notification history and flags
         self.noti_history = []
+        self.noti_history_text = []
+        self.current_notification = []
         self.curr_agent_action = None
         self.overwrite_flag = 0
 
@@ -469,6 +491,7 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.render()
 
         self.step_count = 0
+        self.reward_components = {}
 
         try:
             self.spec.max_episode_steps = self.max_episode_steps
@@ -502,11 +525,12 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.world.DestroyBody(self.particles.pop(0))
 
     def _measure_danger_zone_distance(self, pos):
-        # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
-        left_danger_zone_distance = self.observation_space.high[8]
-        right_danger_zone_distance = self.observation_space.high[9]
-        top_danger_zone_distance = self.observation_space.high[10]
-        bottom_danger_zone_distance = self.observation_space.high[11]
+        # Check if the lander is close to any danger zone using 12 beams
+        # Beams are arranged in a circle: 0°, 30°, 60°, 90°, 120°, 150°, 180°, 210°, 240°, 270°, 300°, 330°
+        beam_angles = [i * 30 for i in range(12)]
+        # beam_angles = [0, 45, 90, 135, 180, 205, 225, 250, 270, 295, 315, 350]
+        # beam_angles = [180, 0, 90, 270, 30, 60, 120, 150 , 210, 240, 300, 330]
+        beam_distances = [self.observation_space.high[8]] * 12  # Initialize all beams to max distance
 
         x = (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2)
         y = (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
@@ -517,31 +541,57 @@ class NotiLunarLander(gym.Env, EzPickle):
             danger_zone_min_y = zone[1][0]
             danger_zone_max_y = zone[1][1]
 
-            # in danger zone
-            if x >= danger_zone_min_x and x <= danger_zone_max_x and y >= danger_zone_min_y and y <= danger_zone_max_y: # in danger zone
-                # should expect negative, and that the closer the more negative, means higher penalty
-                left_danger_zone_distance = 0 # x - danger_zone_max_x 
-                right_danger_zone_distance = 0 # x - danger_zone_min_x 
-                top_danger_zone_distance = 0 # y - danger_zone_max_y 
-                bottom_danger_zone_distance = 0 # y - danger_zone_min_y
+            # Check if lander is inside danger zone
+            if x >= danger_zone_min_x and x <= danger_zone_max_x and y >= danger_zone_min_y and y <= danger_zone_max_y:
+                # Inside danger zone - all beams return 0
+                beam_distances = [0] * 12
                 break
 
-            # check top and bottom danger zone
-            if (x >= danger_zone_min_x and x <= danger_zone_max_x): 
-                if y > danger_zone_max_y: # on top of bottom danger zone
-                    bottom_danger_zone_distance = min(bottom_danger_zone_distance, abs(y - danger_zone_max_y))
+            # For each beam, calculate distance to danger zone
+            for i, angle_deg in enumerate(beam_angles):
+                angle_rad = math.radians(angle_deg) + self.lander.angle
+                dx = math.cos(angle_rad)
+                dy = math.sin(angle_rad)
 
-                if y < danger_zone_min_y: # below top danger zone
-                    top_danger_zone_distance = min(top_danger_zone_distance, abs(danger_zone_min_y - y))
-            
-            # check left and right danger zone
-            if (y >= danger_zone_min_y and y <= danger_zone_max_y):
-                if x < danger_zone_min_x: # left of right danger zone
-                    right_danger_zone_distance = min(right_danger_zone_distance, abs(danger_zone_min_x - x))
-                if x > danger_zone_max_x: # right of left danger zone
-                    left_danger_zone_distance = min(left_danger_zone_distance, abs(x-danger_zone_max_x))
+                min_distance = float('inf')
 
-        return left_danger_zone_distance, right_danger_zone_distance, top_danger_zone_distance, bottom_danger_zone_distance
+                # Check intersection with left boundary (x = danger_zone_min_x)
+                if abs(dx) > 1e-6:
+                    t_left = (danger_zone_min_x - x) / dx
+                    if t_left > 0:
+                        y_intersect = y + dy * t_left
+                        if danger_zone_min_y <= y_intersect <= danger_zone_max_y:
+                            min_distance = min(min_distance, t_left)
+
+                # Check intersection with right boundary (x = danger_zone_max_x)
+                if abs(dx) > 1e-6:
+                    t_right = (danger_zone_max_x - x) / dx
+                    if t_right > 0:
+                        y_intersect = y + dy * t_right
+                        if danger_zone_min_y <= y_intersect <= danger_zone_max_y:
+                            min_distance = min(min_distance, t_right)
+
+                # Check intersection with bottom boundary (y = danger_zone_min_y)
+                if abs(dy) > 1e-6:
+                    t_bottom = (danger_zone_min_y - y) / dy
+                    if t_bottom > 0:
+                        x_intersect = x + dx * t_bottom
+                        if danger_zone_min_x <= x_intersect <= danger_zone_max_x:
+                            min_distance = min(min_distance, t_bottom)
+
+                # Check intersection with top boundary (y = danger_zone_max_y)
+                if abs(dy) > 1e-6:
+                    t_top = (danger_zone_max_y - y) / dy
+                    if t_top > 0:
+                        x_intersect = x + dx * t_top
+                        if danger_zone_min_x <= x_intersect <= danger_zone_max_x:
+                            min_distance = min(min_distance, t_top)
+
+                if min_distance != float('inf'):
+                    beam_distances[i] = min(beam_distances[i], min_distance)
+
+        return tuple(beam_distances)
+
     
     def _world_to_pixel(self, coord, width, height):
         """
@@ -582,6 +632,7 @@ class NotiLunarLander(gym.Env, EzPickle):
             noti_action[2] = (noti_action[2]*3) + 2
 
         self.noti_history.append(noti_action)
+        self.noti_history_text.append(self.taxonomy(noti_action))
         self.curr_agent_action = action
         self.overwrite_flag = overwrite_flag
         
@@ -735,8 +786,8 @@ class NotiLunarLander(gym.Env, EzPickle):
         vel = self.lander.linearVelocity
 
         # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
-        to_left_danger_zone_distance, to_right_danger_zone_distance, to_top_danger_zone_distance, to_bottom_danger_zone_distance = self._measure_danger_zone_distance(pos)
-            
+        beam_distances = self._measure_danger_zone_distance(pos)
+
         state = [
             (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
@@ -746,12 +797,9 @@ class NotiLunarLander(gym.Env, EzPickle):
             20.0 * self.lander.angularVelocity / FPS,
             1.0 if self.legs[0].ground_contact else 0.0,
             1.0 if self.legs[1].ground_contact else 0.0,
-            to_left_danger_zone_distance,
-            to_right_danger_zone_distance,
-            to_top_danger_zone_distance,
-            to_bottom_danger_zone_distance
+            *beam_distances
         ]
-        assert len(state) == 12
+        assert len(state) == 20
 
         reward = 0
         info = {}
@@ -814,6 +862,529 @@ class NotiLunarLander(gym.Env, EzPickle):
             self.render()
 
         self.step_count += 1
+        return np.array(state, dtype=np.float32), reward, terminated, truncated, info
+    
+    # - 0: do nothing
+    # - 1: fire left orientation engine
+    # - 2: fire main engine
+    # - 3: fire right orientation engine
+    def taxonomy(self, utter_action_id):
+        mixed_taxonomy = {
+            2: ['Slow down.', 'Danger zone below, slow down.'],
+            1: ['Shift left.', 'Path clear on the left.'],
+            3: ['Shift right.', 'Path clear on the right.'],
+            0: ['Decend now.', 'Path is clear, can continue.'],
+        }
+
+        if len(utter_action_id.shape) > 1:
+            new_utter_action_id = utter_action_id[0]
+        else:
+            new_utter_action_id = utter_action_id
+            
+        if new_utter_action_id[0] == 1 and len(self.current_notification) >= 1:
+            return self.current_notification.pop(0)
+        elif new_utter_action_id[0] == 2:
+            utter_action_type = new_utter_action_id[1]
+            if len(new_utter_action_id) > 2:
+                utter_action_length = 0 if new_utter_action_id[2] == 2 else 1
+                self.current_notification = mixed_taxonomy[utter_action_type][utter_action_length].split(' ')
+            else:
+                self.current_notification = shortvlong_taxonomy[utter_action_type].split(' ')
+            return self.current_notification.pop(0)
+        else:
+            self.current_notification = []
+            return '.'
+    
+    def render(self):
+        if self.render_mode is None:
+            assert self.spec is not None
+            gym.logger.warn(
+                "You are calling render method without specifying any render mode. "
+                "You can specify the render_mode at initialization, "
+                f'e.g. gym.make("{self.spec.id}", render_mode="rgb_array")'
+            )
+            return
+
+        try:
+            import pygame
+            from pygame import gfxdraw
+        except ImportError as e:
+            raise DependencyNotInstalled(
+                "pygame is not installed, run `pip install gymnasium[box2d]`"
+            ) from e
+
+        if self.screen is None and self.render_mode == "human":
+            pygame.init()
+            pygame.font.init()  # Initialize the font module
+            pygame.display.init()
+            self.screen = pygame.display.set_mode((VIEWPORT_W, VIEWPORT_H))
+        if self.clock is None:
+            self.clock = pygame.time.Clock()
+
+        self.surf = pygame.Surface((VIEWPORT_W, VIEWPORT_H))
+
+        pygame.transform.scale(self.surf, (SCALE, SCALE))
+        pygame.draw.rect(self.surf, (255, 255, 255), self.surf.get_rect())
+
+        for obj in self.particles:
+            obj.ttl -= 0.15
+            obj.color1 = (
+                int(max(0.2, 0.15 + obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+            )
+            obj.color2 = (
+                int(max(0.2, 0.15 + obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+                int(max(0.2, 0.5 * obj.ttl) * 255),
+            )
+
+        self._clean_particles(False)
+
+        for p in self.sky_polys:
+            scaled_poly = []
+            for coord in p:
+                scaled_poly.append((coord[0] * SCALE, coord[1] * SCALE))
+            pygame.draw.polygon(self.surf, (0, 0, 0), scaled_poly)
+            gfxdraw.aapolygon(self.surf, scaled_poly, (0, 0, 0))
+
+        for obj in self.particles + self.drawlist:
+            for f in obj.fixtures:
+                trans = f.body.transform
+                if type(f.shape) is circleShape:
+                    pygame.draw.circle(
+                        self.surf,
+                        color=obj.color1,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE,
+                    )
+                    pygame.draw.circle(
+                        self.surf,
+                        color=obj.color2,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE,
+                    )
+
+                else:
+                    path = [trans * v * SCALE for v in f.shape.vertices]
+                    pygame.draw.polygon(self.surf, color=obj.color1, points=path)
+                    gfxdraw.aapolygon(self.surf, path, obj.color1)
+                    pygame.draw.aalines(
+                        self.surf, color=obj.color2, points=path, closed=True
+                    )
+
+                for x in [self.helipad_x1, self.helipad_x2]:
+                    x = x * SCALE
+                    flagy1 = self.helipad_y * SCALE
+                    flagy2 = flagy1 + 50
+                    pygame.draw.line(
+                        self.surf,
+                        color=(255, 255, 255),
+                        start_pos=(x, flagy1),
+                        end_pos=(x, flagy2),
+                        width=1,
+                    )
+                    pygame.draw.polygon(
+                        self.surf,
+                        color=(204, 204, 0),
+                        points=[
+                            (x, flagy2),
+                            (x, flagy2 - 10),
+                            (x + 25, flagy2 - 5),
+                        ],
+                    )
+                    gfxdraw.aapolygon(
+                        self.surf,
+                        [(x, flagy2), (x, flagy2 - 10), (x + 25, flagy2 - 5)],
+                        (204, 204, 0),
+                    )
+
+        # Flip the surface
+        self.surf = pygame.transform.flip(self.surf, False, True)
+        
+        # Draw danger zones AFTER the flip
+        for zone in self.danger_zones:
+            # Convert normalized coordinates to screen coordinates using _world_to_pixel
+            x_min, y_min = self._world_to_pixel((zone[0][0], zone[1][0]), VIEWPORT_W, VIEWPORT_H)
+            x_max, y_max = self._world_to_pixel((zone[0][1], zone[1][1]), VIEWPORT_W, VIEWPORT_H)
+            
+            # Ensure valid dimensions by swapping if necessary and taking absolute values
+            width = abs(x_max - x_min)
+            height = abs(y_max - y_min)
+            rect_x = min(x_min, x_max)
+            rect_y = min(y_min, y_max)
+            
+            if width > 0 and height > 0:  # Only create surface if dimensions are valid
+                # Draw danger zone rectangle with semi-transparent red
+                danger_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+                danger_surface.fill((255, 0, 0, 128))  # Red with 50% transparency
+                self.surf.blit(danger_surface, (rect_x, rect_y))
+                
+                # Draw border
+                pygame.draw.rect(self.surf, (255, 0, 0), (rect_x, rect_y, width, height), 2)
+        
+        # Add text displaying x, y position AFTER the flip
+        if self.lander is not None:
+            # Initialize font
+            try:
+                if not pygame.font.get_init():
+                    pygame.font.init()
+                font = pygame.font.SysFont('Arial', 20)
+            except:
+                font = pygame.font.Font(None, 20)
+                
+            # Get position
+            pos = self.lander.position
+            x_pos = (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2)
+            y_pos = (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2)
+            
+            # Create text surfaces
+            pos_text = font.render(f'X: {x_pos:.2f} Y: {y_pos:.2f}', True, (255, 255, 255))
+
+            # Add current human action
+            if self.curr_agent_action is not None:
+                # Use different colors for overwritten actions
+                color = (255, 0, 0) if self.overwrite_flag == 1 else (255, 255, 0)  # Red for overwritten, yellow for normal
+                action_text = font.render(f'Human: {self.curr_agent_action}', True, color)
+                self.surf.blit(action_text, (160, 10))
+            
+            # Draw text - now we can use normal coordinates since the surface is already flipped
+            self.surf.blit(pos_text, (10, 10))
+            
+            # Add current notification action
+            curr_noti = "" if len(self.noti_history_text) == 0 else self.noti_history_text[-1]  
+            if len(self.noti_history) == 0:
+                noti_text = font.render(f'Noti: None', True, (0, 255, 255))
+            else:
+                noti_text = font.render(f'Noti: {self.noti_history[len(self.noti_history)-1]} {curr_noti}', True, (255, 255, 255))
+            self.surf.blit(noti_text, (10, 30))
+            
+            # Add notification history
+            y_offset = 50
+            history_text = font.render('Noti History:', True, (0, 255, 255))
+            self.surf.blit(history_text, (10, y_offset))
+            
+            y_offset += 20
+            for i, past_noti in enumerate(reversed(self.noti_history_text[:-1])):
+                if i >= self.max_history_size-1:
+                    break
+                
+                # Use different colors for overwritten actions
+                color = (0, 255, 255)  # cyan for normal
+                past_noti_text = font.render(f'{i+1}: {self.noti_history[len(self.noti_history)-1-1-i]} {past_noti}', True, color)
+                self.surf.blit(past_noti_text, (20, y_offset))
+                y_offset += 20
+            
+            # Add danger zone distance information
+            if hasattr(self, '_measure_danger_zone_distance'):
+                dist = self._measure_danger_zone_distance(pos)
+                value = any(d < 0 for d in dist)
+                color = (255, 0, 0) if value else (0, 255, 0)
+                danger_text = font.render(f'DDist: {", ".join(f"{d:.2f}" for d in dist)}', True, color)
+                self.surf.blit(danger_text, (10, y_offset))
+                y_offset += 20
+            
+            # Add reward information
+            total_reward_text = font.render(f'Total Reward: {self.current_reward:.2f}', True, (255, 255, 255))
+            self.surf.blit(total_reward_text, (10, y_offset))
+            
+            # Add reward components
+            y_offset += 20
+            for component, value in self.reward_components.items():
+                color = (0, 255, 0) if value >= 0 else (255, 0, 0)  # Green for positive, red for negative
+                component_text = font.render(f'{component}: {value:.2f}', True, color)
+                self.surf.blit(component_text, (10, y_offset))
+                y_offset += 20
+
+        if self.render_mode == "human":
+            assert self.screen is not None
+            self.screen.blit(self.surf, (0, 0))
+            pygame.event.pump()
+            self.clock.tick(self.metadata["render_fps"])
+            pygame.display.flip()
+        elif self.render_mode == "rgb_array":
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(self.surf)), axes=(1, 0, 2)
+            )
+
+    def close(self):
+        if self.screen is not None:
+            import pygame
+
+            pygame.display.quit()
+            pygame.quit()
+            self.isopen = False
+
+
+class HumanAgentLunarLander(NotiLunarLander):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        low = np.array(
+            [
+                # these are bounds for position
+                # realistically the environment should have ended
+                # long before we reach more than 50% outside
+                -1.5 * SCALE * 2,
+                -1.5 * SCALE * 2,
+                # velocity bounds is 5x rated speed
+                -5.0,
+                -5.0,
+                -math.pi,
+                -5.0,
+                -0.0,
+                -0.0
+            ]
+        ).astype(np.float32)
+        high = np.array(
+            [
+                # these are bounds for position
+                # realistically the environment should have ended
+                # long before we reach more than 50% outside
+                1.5 * SCALE * 2,
+                1.5 * SCALE * 2,
+                # velocity bounds is 5x rated speed
+                5.0,
+                5.0,
+                math.pi,
+                5.0,
+                1.0,
+                1.0
+            ]
+        ).astype(np.float32)
+
+        # useful range is -1 .. +1, but spikes can be higher
+        self.observation_space = spaces.Box(low, high)
+        self.enable_wind = True
+
+    def step(self, action):
+        assert self.lander is not None
+
+        # Update wind and apply to the lander
+        assert self.lander is not None, "You forgot to call reset()"
+        if self.enable_wind and not (
+            self.legs[0].ground_contact or self.legs[1].ground_contact
+        ):
+            # the function used for wind is tanh(sin(2 k x) + sin(pi k x)),
+            # which is proven to never be periodic, k = 0.01
+            wind_mag = (
+                math.tanh(
+                    math.sin(0.02 * self.wind_idx)
+                    + (math.sin(math.pi * 0.01 * self.wind_idx))
+                )
+                * self.wind_power
+            )
+            self.wind_idx += 1
+            self.lander.ApplyForceToCenter(
+                (wind_mag, 0.0),
+                True,
+            )
+
+            # the function used for torque is tanh(sin(2 k x) + sin(pi k x)),
+            # which is proven to never be periodic, k = 0.01
+            torque_mag = math.tanh(
+                math.sin(0.02 * self.torque_idx)
+                + (math.sin(math.pi * 0.01 * self.torque_idx))
+            ) * (self.turbulence_power)
+            self.torque_idx += 1
+            self.lander.ApplyTorque(
+                (torque_mag),
+                True,
+            )
+
+        if self.continuous:
+            action = np.clip(action, -1, +1).astype(np.float32)
+        # else:
+            # assert self.action_space.contains(
+            #     action
+            # ), f"{action!r} ({type(action)}) invalid "
+
+        # Apply Engine Impulses
+
+        # Tip is a the (X and Y) components of the rotation of the lander.
+        tip = (math.sin(self.lander.angle), math.cos(self.lander.angle))
+
+        # Side is the (-Y and X) components of the rotation of the lander.
+        side = (-tip[1], tip[0])
+
+        # Generate two random numbers between -1/SCALE and 1/SCALE.
+        dispersion = [self.np_random.uniform(-1.0, +1.0) / SCALE for _ in range(2)]
+
+        m_power = 0.0
+        if (self.continuous and action[0] > 0.0) or (
+            not self.continuous and action == 2
+        ):
+            # Main engine
+            if self.continuous:
+                m_power = (np.clip(action[0], 0.0, 1.0) + 1.0) * 0.5  # 0.5..1.0
+                assert m_power >= 0.5 and m_power <= 1.0
+            else:
+                m_power = 1.0
+
+            # 4 is move a bit downwards, +-2 for randomness
+            # The components of the impulse to be applied by the main engine.
+            ox = (
+                tip[0] * (MAIN_ENGINE_Y_LOCATION / SCALE + 2 * dispersion[0])
+                + side[0] * dispersion[1]
+            )
+            oy = (
+                -tip[1] * (MAIN_ENGINE_Y_LOCATION / SCALE + 2 * dispersion[0])
+                - side[1] * dispersion[1]
+            )
+
+            impulse_pos = (self.lander.position[0] + ox, self.lander.position[1] + oy)
+            if self.render_mode is not None:
+                # particles are just a decoration, with no impact on the physics, so don't add them when not rendering
+                p = self._create_particle(
+                    3.5,  # 3.5 is here to make particle speed adequate
+                    impulse_pos[0],
+                    impulse_pos[1],
+                    m_power,
+                )
+                p.ApplyLinearImpulse(
+                    (
+                        ox * MAIN_ENGINE_POWER * m_power,
+                        oy * MAIN_ENGINE_POWER * m_power,
+                    ),
+                    impulse_pos,
+                    True,
+                )
+            self.lander.ApplyLinearImpulse(
+                (-ox * MAIN_ENGINE_POWER * m_power, -oy * MAIN_ENGINE_POWER * m_power),
+                impulse_pos,
+                True,
+            )
+
+        s_power = 0.0
+        if (self.continuous and np.abs(action[1]) > 0.5) or (
+            not self.continuous and action in [1, 3]
+        ):
+            # Orientation/Side engines
+            if self.continuous:
+                direction = np.sign(action[1])
+                s_power = np.clip(np.abs(action[1]), 0.5, 1.0)
+                assert s_power >= 0.5 and s_power <= 1.0
+            else:
+                # action = 1 is left, action = 3 is right
+                direction = action - 2
+                s_power = 1.0
+
+            # The components of the impulse to be applied by the side engines.
+            ox = tip[0] * dispersion[0] + side[0] * (
+                3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE
+            )
+            oy = -tip[1] * dispersion[0] - side[1] * (
+                3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE
+            )
+
+            # The constant 17 is a constant, that is presumably meant to be SIDE_ENGINE_HEIGHT.
+            # However, SIDE_ENGINE_HEIGHT is defined as 14
+            # This casuses the position of the thurst on the body of the lander to change, depending on the orientation of the lander.
+            # This in turn results in an orientation depentant torque being applied to the lander.
+            impulse_pos = (
+                self.lander.position[0] + ox - tip[0] * 17 / SCALE,
+                self.lander.position[1] + oy + tip[1] * SIDE_ENGINE_HEIGHT / SCALE,
+            )
+            if self.render_mode is not None:
+                # particles are just a decoration, with no impact on the physics, so don't add them when not rendering
+                p = self._create_particle(0.7, impulse_pos[0], impulse_pos[1], s_power)
+                p.ApplyLinearImpulse(
+                    (
+                        ox * SIDE_ENGINE_POWER * s_power,
+                        oy * SIDE_ENGINE_POWER * s_power,
+                    ),
+                    impulse_pos,
+                    True,
+                )
+            self.lander.ApplyLinearImpulse(
+                (-ox * SIDE_ENGINE_POWER * s_power, -oy * SIDE_ENGINE_POWER * s_power),
+                impulse_pos,
+                True,
+            )
+
+        self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
+
+        pos = self.lander.position
+        vel = self.lander.linearVelocity
+
+        state = [
+            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
+            vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
+            self.lander.angle,
+            20.0 * self.lander.angularVelocity / FPS,
+            1.0 if self.legs[0].ground_contact else 0.0,
+            1.0 if self.legs[1].ground_contact else 0.0,
+        ]
+        assert len(state) == 8
+
+        reward = 0
+        info = {}
+        
+        # Distance-based rewards with better scaling
+        distance_reward = -50 * np.sqrt(state[0] * state[0] + state[1] * state[1])
+        velocity_reward = -50 * np.sqrt(state[2] * state[2] + state[3] * state[3])
+        
+        # Angle reward with better scaling and deadzone
+        angle_reward = -50 * abs(state[4]) if abs(state[4]) > 0.1 else 0
+        
+        # Angular velocity reward to encourage stability
+        angular_velocity_reward = -20 * abs(state[5])
+        
+        # Leg contact rewards with bonus for both legs
+        leg_reward = 20 * (state[6] + state[7])
+        if state[6] and state[7]:  # Bonus for both legs
+            leg_reward += 30
+            
+        # Fuel efficiency rewards
+        fuel_reward = -m_power * 0.15  # Reduced penalty for main engine
+        side_fuel_reward = -s_power * 0.02  # Reduced penalty for side engines
+        
+        # Combine all rewards
+        shaping = (
+            distance_reward +
+            velocity_reward +
+            angle_reward +
+            angular_velocity_reward +
+            leg_reward +
+            fuel_reward +
+            side_fuel_reward
+        )
+        
+        # Add shaping to reward if prev_shaping exists
+        if self.prev_shaping is not None:
+            reward = shaping - self.prev_shaping
+        self.prev_shaping = shaping
+
+        terminated = False
+        truncated = False
+        success_landing = pos.x >= self.helipad_x1 and pos.x <= self.helipad_x2 and self.legs[0].ground_contact and self.legs[1].ground_contact and state[2] < 0.05 and state[2] > -0.05 and state[3] < 0.05 and state[3] > -0.05
+        
+        if self.step_count >= self.spec.max_episode_steps:
+            truncated = True
+        
+        if success_landing:
+            terminated = True
+            reward = +200  # Increased success reward
+        elif self.game_over and not success_landing:
+            terminated = True
+            reward = -200  # Increased failure penalty
+        elif not self.lander.awake and not success_landing:
+            terminated = True
+            reward = -200  # Increased failure penalty
+            
+        # Store the current reward for display
+        self.current_reward = reward
+
+        info["terminated"] = terminated
+        info["success"] = success_landing
+        info["truncated"] = truncated
+
+        if self.render_mode == "human":
+            self.render()
+
+        self.step_count += 1
+
         return np.array(state, dtype=np.float32), reward, terminated, truncated, info
 
     def render(self):
@@ -972,49 +1543,21 @@ class NotiLunarLander(gym.Env, EzPickle):
             # Draw text - now we can use normal coordinates since the surface is already flipped
             self.surf.blit(pos_text, (10, 10))
             
-            # Add current notification action
-            curr_noti = "" if len(self.noti_history) == 0 else self.noti_history[-1]  
-            noti_text = font.render(f'Noti: {curr_noti}', True, (0, 255, 255))
-            self.surf.blit(noti_text, (10, 30))
-            
-            # Add notification history
             y_offset = 50
-            history_text = font.render('Noti History:', True, (0, 255, 255))
-            self.surf.blit(history_text, (10, y_offset))
-            
-            y_offset += 20
-            for i, past_noti in enumerate(reversed(self.noti_history[:-1])):
+            for i, past_noti in enumerate(reversed(self.noti_history_text[:-1])):
                 if i >= self.max_history_size-1:
                     break
                 
                 # Use different colors for overwritten actions
                 color = (0, 255, 255)  # cyan for normal
-                past_noti_text = font.render(f'{i+1}: {past_noti}', True, color)
+                past_noti_text = font.render(f'{i+1}: {self.noti_history[len(self.noti_history)-1-1-i]} {past_noti}', True, color)
                 self.surf.blit(past_noti_text, (20, y_offset))
-                y_offset += 20
-            
-            # Add danger zone distance information
-            if hasattr(self, '_measure_danger_zone_distance'):
-                left_dist, right_dist, top_dist, bottom_dist = self._measure_danger_zone_distance(pos)
-                value = left_dist < 0 or right_dist < 0 or top_dist < 0 or bottom_dist < 0
-                color = (255, 0, 0) if value else (0, 255, 0)
-                danger_text = font.render(f'Danger: L:{left_dist:.2f} R:{right_dist:.2f} T:{top_dist:.2f} B:{bottom_dist:.2f}', 
-                                         True, color)
-                self.surf.blit(danger_text, (10, y_offset))
                 y_offset += 20
             
             # Add reward information
             total_reward_text = font.render(f'Total Reward: {self.current_reward:.2f}', True, (255, 255, 255))
             self.surf.blit(total_reward_text, (10, y_offset))
             
-            # Add reward components
-            y_offset += 20
-            for component, value in self.reward_components.items():
-                color = (0, 255, 0) if value >= 0 else (255, 0, 0)  # Green for positive, red for negative
-                component_text = font.render(f'{component}: {value:.2f}', True, color)
-                self.surf.blit(component_text, (10, y_offset))
-                y_offset += 20
-
         if self.render_mode == "human":
             assert self.screen is not None
             self.screen.blit(self.surf, (0, 0))
@@ -1026,13 +1569,6 @@ class NotiLunarLander(gym.Env, EzPickle):
                 np.array(pygame.surfarray.pixels3d(self.surf)), axes=(1, 0, 2)
             )
 
-    def close(self):
-        if self.screen is not None:
-            import pygame
-
-            pygame.display.quit()
-            pygame.quit()
-            self.isopen = False
 
 class LargeRewardNotiLunarLander(NotiLunarLander):
     def __init__(self, *args, **kwargs):
@@ -1060,6 +1596,7 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
             noti_action[2] = (noti_action[2]*3) + 2
         
         self.noti_history.append(noti_action)
+        self.noti_history_text.append(self.taxonomy(noti_action))
         self.curr_agent_action = action
         self.overwrite_flag = overwrite_flag
 
@@ -1213,7 +1750,7 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
         vel = self.lander.linearVelocity
 
         # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
-        to_left_danger_zone_distance, to_right_danger_zone_distance, to_top_danger_zone_distance, to_bottom_danger_zone_distance = self._measure_danger_zone_distance(pos)
+        beam_distances = self._measure_danger_zone_distance(pos)
             
         state = [
             (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
@@ -1224,12 +1761,9 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
             20.0 * self.lander.angularVelocity / FPS,
             1.0 if self.legs[0].ground_contact else 0.0,
             1.0 if self.legs[1].ground_contact else 0.0,
-            to_left_danger_zone_distance,
-            to_right_danger_zone_distance,
-            to_top_danger_zone_distance,
-            to_bottom_danger_zone_distance
+            *beam_distances
         ]
-        assert len(state) == 12
+        assert len(state) == 20
 
         reward = 0
         info = {}
@@ -1250,17 +1784,9 @@ class LargeRewardNotiLunarLander(NotiLunarLander):
             leg_reward += 30
             
         # Danger zone penalties
-        danger_zone_penalty = -10 * (
-            max(0.5 - state[8], 0) +  # left danger zone
-            max(0.5 - state[9], 0) +  # right danger zone
-            max(0.5 - state[10], 0) + # top danger zone
-            max(0.5 - state[11], 0)   # bottom danger zone
-        )
+        danger_zone_penalty = -10 * sum(max(0.2 - d, 0) for d in state[8:])
 
-        if state[8] < 0 and state[9] < 0 and state[10] < 0 and state[11] < 0:
-            in_danger_zone_penalty = -30
-        else:
-            in_danger_zone_penalty = 0
+        in_danger_zone_penalty = -30 * any(d <= 0 for d in state[8:])
         
         # Fuel efficiency rewards
         fuel_reward = -m_power * 0.15  # Reduced penalty for main engine
@@ -1334,31 +1860,35 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
                 [[-1.0, 0.3], [0.3, 0.6]],
                 [[0.7, 1.0], [0.8, 1.33]]
             ],
-            # Configuration 3: Single central barrier
+            # # Configuration 3: Single large central block
+            # [
+            #     [[-0.4, 0.4], [0.5, 0.8]]
+            # ],
+            # # Configuration 4: Two zones creating a narrow path
+            # [
+            #     [[-0.3, 0.7], [0.5, 0.8]],
+            #     [[0.6, 1.0], [0.8, 1.33]]
+            # ],
+            # Configuration 5: Single left-central block
             [
-                [[-0.5, 0.5], [0.4, 0.7]]
+                [[-0.6, 0.1], [0.6, 0.9]]
             ],
-            # Configuration 4: Two zones creating a narrow path
-            [
-                [[-0.3, 0.7], [0.5, 0.8]],
-                [[0.6, 1.0], [0.8, 1.33]]
-            ],
-            # Configuration 5: Single large central block
-            [
-                [[-0.6, 0.0], [0.6, 0.9]]
-            ],
-            # Configuration 6: Two blocks on left side
-            [
-                [[-1.0, -0.5], [0.8, 1.33]],
-                [[0.2, 0.6], [0.5, 1.33]]
-            ]
+            # # Configuration 5: Single right-central block
+            # [
+            #     [[0.0, 0.6], [0.3, 0.5]]
+            # ],
+            # # Configuration 6: Two blocks on left side
+            # [
+            #     [[-1.0, -0.5], [0.8, 1.33]],
+            #     [[0.2, 0.6], [0.5, 1.33]]
+            # ]
         ]
         # Select a first danger zone configuration at initialization
         self.danger_zones = self.possible_danger_zones[0]
         self.time_penalty = -0.0
         self.prev_state = None
         self.enable_wind = False
-        self.random_danger_zone = False
+        self.random_danger_zone = True
         self.noti_action_length = len(self.action_space.nvec)-1
         
     def reset(
@@ -1381,6 +1911,8 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         
         # Reset notification history and flags
         self.noti_history = []
+        self.noti_history_text = []
+        self.current_notification = []
         self.curr_agent_action = None
         self.overwrite_flag = False
 
@@ -1492,7 +2024,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             self.render()
 
         self.step_count = 0
-        
+        self.reward_components = {}
         try:
             self.spec.max_episode_steps = self.max_episode_steps
         except:
@@ -1526,12 +2058,13 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
                 noti_action[3] = min(noti_action[2], (noti_action[3]*3)+2)
         
         self.noti_history.append(noti_action)
+        self.noti_history_text.append(self.taxonomy(noti_action))
         self.curr_agent_action = action
         self.overwrite_flag = overwrite_flag
 
         if len(self.noti_history) > self.max_history_size:
             self.noti_history.pop(0)
-
+            self.noti_history_text.pop(0)
         
         assert self.lander is not None
 
@@ -1683,7 +2216,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         vel = self.lander.linearVelocity
 
         # Check if the lander is close to any danger zone (zone is represented by a square with 4 points)
-        to_left_danger_zone_distance, to_right_danger_zone_distance, to_top_danger_zone_distance, to_bottom_danger_zone_distance = self._measure_danger_zone_distance(pos)
+        beam_distances = self._measure_danger_zone_distance(pos)
             
         state = [
             (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
@@ -1694,15 +2227,13 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             20.0 * self.lander.angularVelocity / FPS,
             1.0 if self.legs[0].ground_contact else 0.0,
             1.0 if self.legs[1].ground_contact else 0.0,
-            to_left_danger_zone_distance,
-            to_right_danger_zone_distance,
-            to_top_danger_zone_distance,
-            to_bottom_danger_zone_distance
+            *beam_distances
         ]
-        assert len(state) == 12
+        assert len(state) == 20
 
         reward = 0
         info = {}
+        self.reward_components = {}
 
         # cost for speaking
         noti_penalty = -1 #-0.3
@@ -1711,6 +2242,21 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             self.reward_components["noti_penalty"] = noti_penalty
         else:
             self.reward_components["noti_penalty"] = 0
+
+        # value for outputting noti_action[0] == 1 after noti_action[0] == 2 and noti_action[1] == n
+        tmp_length = 0
+        noti_continue = 0
+        if noti_action[0] == 1:
+            for i, j in enumerate(reversed(self.noti_history[:-1])):
+                if j[0] == 0:
+                    break
+                if j[0] == 2:
+                    tmp_length = j[2]
+                    if i < tmp_length:
+                        noti_continue += ((i+1)*0.01)
+                    break
+        reward += noti_continue
+        self.reward_components["noti_continue"] = noti_continue
 
         # # value for longer notification
         # noti_content_reward = 2
@@ -1741,14 +2287,10 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.reward_components["fuel"] = -(m_power * 0.30 + s_power * 0.03)
 
         # Danger zone penalties
-        danger_zone_penalty = -30 * (
-            max(0.2 - state[8], 0) +  # left danger zone
-            max(0.2 - state[9], 0) +  # right danger zone
-            max(0.2 - state[10], 0) + # top danger zone
-            max(0.2 - state[11], 0)   # bottom danger zone
-        )
+        danger_zone_penalty = -30 * (sum(max(0.1 - d, 0) for d in state[8:]))
+
         self.reward_components["danger_zone"] = danger_zone_penalty
-        in_danger_zone = (state[8] <= 0 and state[9] <= 0 and state[10] <= 0 and state[11] <= 0)
+        in_danger_zone = any(d <= 0 for d in state[8:])
 
         # Reward for moving away from danger zones
         danger_avoidance_reward = 0

@@ -352,12 +352,11 @@ def analyze_danger_zone_interactions(data: List[Dict[str, Any]], output_dir: str
             
             # Check if entry into any danger zone occurred
             if not entry_occurred:
-                for direction, distance in step['distance_to_danger'].items():
-                    if distance is not None and distance <= 0:  # Entry into danger zone
-                        entry_occurred = True
-                        episodes_with_entry += 1
-                        steps_to_entry.append(i)
-                        break
+                if step['in_danger_zone']:
+                    entry_occurred = True
+                    episodes_with_entry += 1
+                    steps_to_entry.append(i)
+                    break
     
     # Calculate entry rate
     total_episodes = len(data)
@@ -589,7 +588,7 @@ def analyze_success_rate(data: List[Dict[str, Any]], output_dir: str, policy_nam
         
         # Check if the episode was successful
         # For Lunar Lander, check if the lander landed successfully
-        if 'info' in trajectory[-1] and 'success' in trajectory[-1]['info']:
+        if 'info' in trajectory[-1] and 'success' in trajectory[-1]['info'] and not entered_danger_zone:
             success = trajectory[-1]['info']['success']
         # For Highway environment, check if the vehicle reached the end without crashing
         elif 'info' in trajectory[-1] and 'crashed' in trajectory[-1]['info']:
@@ -1760,14 +1759,14 @@ def main():
             'Policy': policy_name,
             'Environment': result['env_type'],
             'Success Rate': result['success_stats'].get('success_rate', 0),
+            'Avg Overwrite Rate Per Trajectory': result['per_trajectory_notification_stats'].get('avg_overwrite_rate_per_trajectory', 0),
+            'Avg Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats'].get('avg_notification_rate', 0),
             'Avg Steps to Success': result['success_stats'].get('avg_steps_to_success', 0),
             'Total Notifications': result['notification_stats'].get('total_notifications', 0),
             'Avg Notification Length': result['notification_stats'].get('avg_notification_length', 0),
             'Human Overwrite Rate': result['interaction_stats'].get('overwrite_rate', 0),
             'Avg Notifications Per Trajectory': result['per_trajectory_notification_stats'].get('avg_notifications_per_trajectory', 0),
             'Avg Notification Length Per Trajectory': result['per_trajectory_notification_stats'].get('avg_notification_length_per_trajectory', 0),
-            'Avg Overwrite Rate Per Trajectory': result['per_trajectory_notification_stats'].get('avg_overwrite_rate_per_trajectory', 0),
-            'Avg Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats'].get('avg_notification_rate', 0),
             'Std Dev Notification Rate Per Trajectory': result['notification_rate_per_trajectory_stats'].get('std_notification_rate', 0)
         }
         
@@ -1803,6 +1802,16 @@ def main():
             })
         
         comparative_data.append(policy_data)
+
+        # print(f"Policy: {policy_name}, Environment: {result['env_type']}, output_dir: {args.output_dir}")
+        # print(f"Success Rate: {result['success_stats'].get('success_rate', 0)}")
+        # print(f"Avg Overwrite Rate Per Trajectory: {result['per_trajectory_notification_stats'].get('avg_overwrite_rate_per_trajectory', 0)}")
+        # print(f"Avg Notification Rate Per Trajectory: {result['notification_rate_per_trajectory_stats'].get('avg_notification_rate', 0)}")
+        print(f"{result['success_stats'].get('success_rate', 0)}, {result['success_stats'].get('avg_steps_to_success', 0)}, {result['per_trajectory_notification_stats'].get('avg_overwrite_rate_per_trajectory', 0)}, {result['notification_rate_per_trajectory_stats'].get('avg_notification_rate', 0)}, {length_selection_rates[5]}", end=", ")
+        if result['env_type'] == 'DangerZoneLunarLander':
+            print(result['danger_zone_stats'].get('entry_rate', 0))
+        if result['env_type'] == 'multi-merge-v0':
+            print(result['velocity_per_trajectory_stats'].get('avg_vx_mean', 0))
 
     # Create comparative DataFrame
     comparative_df = pd.DataFrame(comparative_data)

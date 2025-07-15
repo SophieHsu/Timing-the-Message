@@ -75,36 +75,23 @@ def create_danger_zone_reward_heatmap(env, resolution=50, angle=0.0, velocity=(0
             pos = Pos(pos_x, pos_y)
             
             # Calculate danger zone distances
-            left_dist, right_dist, top_dist, bottom_dist = env._measure_danger_zone_distance(pos)
-            state[8] = left_dist
-            state[9] = right_dist
-            state[10] = top_dist
-            state[11] = bottom_dist
+            beam_distances = env._measure_danger_zone_distance(pos)
+            for k in range(12):
+                state[8 + k] = beam_distances[k]
             
             # Calculate danger zone penalty
-            danger_zone_penalty = -10 * (
-                max(0.2 - state[8], 0) +  # left danger zone
-                max(0.2 - state[9], 0) +  # right danger zone
-                max(0.2 - state[10], 0) + # top danger zone
-                max(0.2 - state[11], 0)   # bottom danger zone
-            )
+            danger_zone_penalty = -10 * sum(max(0.2 - d, 0) for d in state[8:20])
             
             # Calculate danger avoidance reward
             # This is a simplified version since we don't have previous state
             # In the actual environment, this would be calculated based on the previous state
-            in_danger_zone = state[8] < 0 or state[9] < 0 or state[10] < 0 or state[11] < 0
+            in_danger_zone = any(d < 0 for d in state[8:20])
             
             # For visualization purposes, we'll calculate a proxy for danger avoidance
             # based on the current state only
             danger_avoidance_reward = 0
             if not in_danger_zone:
-                # Reward for being far from danger zones
-                danger_avoidance_reward = 0.1 * (
-                    max(0, state[8]) +  # left danger zone
-                    max(0, state[9]) +  # right danger zone
-                    max(0, state[10]) + # top danger zone
-                    max(0, state[11])   # bottom danger zone
-                )
+                danger_avoidance_reward = 0.1 * sum(max(0, d) for d in state[8:20])
             
             # Store individual reward components
             reward_components['danger_zone_penalty'][i, j] = danger_zone_penalty

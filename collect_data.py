@@ -45,9 +45,11 @@ def main():
     np.random.seed(args.seed)
     
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() and args.cuda else "cpu")
     if args.device is None:
         args.device = device
+
+    print(f"Using device: {device}")
     
     # Number of parallel environments to run
     num_envs = args.num_envs
@@ -178,6 +180,7 @@ def main():
                             'top': None if len(next_obs[env_idx]) < 11 else next_obs[env_idx][10], 
                             'bottom': None if len(next_obs[env_idx]) < 12 else next_obs[env_idx][11]
                         }
+                        trajectory_step['in_danger_zone'] = bool(obs[env_idx][8] <= 0 and obs[env_idx][9] <= 0 and obs[env_idx][10] <= 0 and obs[env_idx][11] <= 0)
                     elif "multi-merge-v0" in args.env_id:
                         # Add vehicle information for highway environment
                         if 'vehicle_info' in infos:
@@ -243,7 +246,7 @@ def main():
                         next_obs[env_idx] = o
                         for k in i.keys():
                             infos[k][env_idx] = i[k] 
-                        human_agent.reset()
+                        human_agent.reset(env_idx)
             
             # Update observations
             obs = next_obs

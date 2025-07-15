@@ -18,14 +18,14 @@ class HumanAgent:
         self.device = device    
         
         if args.human_agent_type not in ["IDM", "chef"]:
-            # api = wandb.Api()
-            # run = api.run(f"yachuanh/timing/{args.human_agent_run_id}")
-            # human_agent_path = run.config['filepath'] + "/agent.pt"
-            human_agent_path = "/home/sophie.hsu.pi/Timing-the-Message/wandb/run-20250409_201211-xlq34dpt/files/agent.pt"
+            api = wandb.Api()
+            run = api.run(f"tri/timing/{args.human_agent_run_id}")
+            human_agent_path = run.config['filepath'] + "/agent.pt"
+            # human_agent_path = "/home/sophie.hsu.pi/Timing-the-Message/wandb/run-20250409_201211-xlq34dpt/files/agent.pt"
         
             if args.human_agent_type == "mlp":
                 print(envs.single_observation_space)
-                self.policy_network = MLPAgent(args, envs.single_observation_space, envs.single_action_space).to(self.device)
+                self.policy_network = MLPAgent(args, 8, envs.single_action_space).to(self.device)
             elif args.human_agent_type == "lstm":
                 self.policy_network = LSTMAgent(args, envs.single_observation_space).to(self.device)
             elif args.human_agent_type == "transformer":
@@ -45,19 +45,31 @@ class HumanAgent:
             self.reaction_delay = rand_delay
         else:
             self.reaction_delay = self.args.human_reaction_delay
-        print(f"reaction_delay: {self.reaction_delay}")
+
         self.num_envs = num_envs if num_envs is not None else self.args.num_envs
         self.reset()
 
-    def reset(self):
-        self.utterance_memory = np.array([[tuple([0]*self.noti_action_length)]*self.args.human_utterance_memory_length]*self.num_envs)
-        self.overwrite_action = np.array([-1]*self.num_envs, dtype=np.int32)
-        self.tmp_overwrite_action = np.array([-1]*self.num_envs, dtype=np.int32)
-        self.track_overwrite = np.zeros(self.num_envs, dtype=np.int32)
-        self.track_reaction_delay = np.zeros(self.num_envs, dtype=np.int32)
-        if not self.args.fix_overwrite:
-            self.overwrite_length = np.array([0]*self.num_envs, dtype=np.int32)
-            self.tmp_overwrite_length = np.array([0]*self.num_envs, dtype=np.int32)
+    def reset(self, idx=None):
+        if idx is None:
+            self.utterance_memory = np.array([[tuple([0]*self.noti_action_length)]*self.args.human_utterance_memory_length]*self.num_envs)
+            self.overwrite_action = np.array([-1]*self.num_envs, dtype=np.int32)
+            self.tmp_overwrite_action = np.array([-1]*self.num_envs, dtype=np.int32)
+            self.track_overwrite = np.zeros(self.num_envs, dtype=np.int32)
+            self.track_reaction_delay = np.zeros(self.num_envs, dtype=np.int32)
+            if not self.args.fix_overwrite:
+                self.overwrite_length = np.array([0]*self.num_envs, dtype=np.int32)
+                self.tmp_overwrite_length = np.array([0]*self.num_envs, dtype=np.int32)
+
+        else:
+            self.utterance_memory[idx] = np.array([tuple([0]*self.noti_action_length)]*self.args.human_utterance_memory_length)
+            self.overwrite_action[idx] = -1
+            self.tmp_overwrite_action[idx] = -1
+            self.track_overwrite[idx] = 0
+            self.track_reaction_delay[idx] = 0
+            if not self.args.fix_overwrite:
+                self.overwrite_length[idx] = 0
+                self.tmp_overwrite_length[idx] = 0
+
 
     def process_utterance(self, utterance):
         # Update utterance memory with the new utterance
@@ -99,7 +111,8 @@ class HumanAgent:
                     else:
                         track_noti_action_reaction_lengths[env_idx] = tmp_utter[2]
                     if not self.args.human_comprehend_bool:
-                        track_noti_action_lengths[env_idx] = 1
+                        # track_noti_action_lengths[env_idx] = 1
+                        track_noti_action_reaction_lengths[env_idx] = 1
                     is_done[env_idx] = True
                 else:
                     is_done[env_idx] = True
@@ -113,7 +126,7 @@ class HumanAgent:
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]
             self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
             if not self.args.fix_overwrite:
-                self.tmp_overwrite_length[valid_lengths] = track_noti_action_reaction_lengths[valid_lengths]
+                self.tmp_overwrite_length[valid_lengths] = track_noti_action_lengths[valid_lengths]
             self.track_reaction_delay[valid_lengths] = 1
             is_done[valid_lengths] = True
             
@@ -144,7 +157,7 @@ class HumanAgent:
 
     def get_action(self, obs, utterance):
         with torch.no_grad():
-            action, _, _, _ = self.policy_network.get_action_and_value(obs)
+            action, _, _, _ = self.policy_network.get_action_and_value(obs[:, :8])
 
         # Update action based on utterance
         self.process_utterance(utterance)
@@ -207,7 +220,8 @@ class HumanDriverAgent(HumanAgent):
                     else:
                         track_noti_action_reaction_lengths[env_idx] = tmp_utter[2]
                     if not self.args.human_comprehend_bool:
-                        track_noti_action_lengths[env_idx] = 1
+                        # track_noti_action_lengths[env_idx] = 1
+                        track_noti_action_reaction_lengths[env_idx] = 1
                     is_done[env_idx] = True
                 else:
                     is_done[env_idx] = True
@@ -219,7 +233,8 @@ class HumanDriverAgent(HumanAgent):
             valid_lengths = np.where((track_noti_action_lengths > 0) & (track_lengths == track_noti_action_reaction_lengths) & (track_noti_actions != None))[0]
             self.tmp_overwrite_action[valid_lengths] = track_noti_actions[valid_lengths]
             if not self.args.fix_overwrite:
-                self.tmp_overwrite_length[valid_lengths] = (track_noti_action_reaction_lengths[valid_lengths]-2)*2 + 2 # 5length = 8overwrite, 2length = 2overwrite
+                # self.tmp_overwrite_length[valid_lengths] = (track_noti_action_reaction_lengths[valid_lengths]-2)*2 + 2 # 5length = 8overwrite, 2length = 2overwrite
+                self.tmp_overwrite_length[valid_lengths] = track_noti_action_lengths[valid_lengths]
             
             # can only change lane once
             only_once = np.where(((track_noti_actions == 0) | (track_noti_actions == 2)) & (track_noti_action_lengths > 0) & (track_lengths == track_noti_action_lengths) & (track_noti_actions != None))[0]

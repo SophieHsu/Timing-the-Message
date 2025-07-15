@@ -14,6 +14,8 @@ import copy
 import matplotlib.pyplot as plt
 import json
 from pathlib import Path
+from src.utils.rollouts import BaseRolloutCollector
+
 
 class BaseEvaluator:
     def __init__(self, args, run_name, num_envs=None):
@@ -151,6 +153,45 @@ class BaseEvaluator:
                 
                 json.dump(convert_numpy_types(trajectory_data), f, indent=2)
 
+    def rollout_version_evaluate(self,
+        model_path: str,
+        make_env: Callable,
+        eval_episodes: int,
+        model: torch.nn.Module,
+        device: torch.device = torch.device("cpu"),
+        capture_video: bool = True,
+        visualize: bool = False,
+    ):
+
+        # TRY NOT TO MODIFY: seeding
+        random.seed(self.args.seed)
+        np.random.seed(self.args.seed)
+        torch.manual_seed(self.args.seed)
+        torch.backends.cudnn.deterministic = self.args.torch_deterministic
+
+        
+        envs = gym.vector.SyncVectorEnv(
+            [make_env(self.args.env_id, i, capture_video, self.run_name) for i in range(eval_episodes)],
+        )
+        
+        agent = model(self.args, envs.single_observation_space, envs.single_action_space, self.args.noti_action_length).to(device)
+        agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        agent.eval()
+
+        human_agent = None
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
+            human_agent = HumanAgent(envs, self.args, device, num_envs=eval_episodes)
+        elif self.args.human_agent_type is not None and self.args.human_agent_type == "IDM":
+            human_agent = HumanDriverAgent(envs, self.args, device, num_envs=eval_episodes)
+
+        agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
+        rollout_collector = BaseRolloutCollector(self.args, agent, envs, None, device, human_agent, agent_single_action_space=agent_single_action_space, num_envs=eval_episodes)
+
+        results = rollout_collector.collect_rollouts(0)
+        episodic_returns = [results["rewards"][:,i].sum().item() for i in range(eval_episodes)]
+
+        return episodic_returns, 0, 0, 0
+
     def evaluate(self,
         model_path: str,
         make_env: Callable,
@@ -163,7 +204,10 @@ class BaseEvaluator:
         self.visualize = visualize
         
         envs = gym.vector.SyncVectorEnv([make_env(self.args.env_id, 0, capture_video, self.run_name)])
-        agent = model(self.args, envs.single_observation_space, envs.single_action_space, self.args.noti_action_length).to(device)
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
+            agent = model(self.args, envs.single_observation_space, envs.single_action_space, self.args.noti_action_length).to(device)
+        else:
+            agent = model(self.args, envs.single_observation_space, envs.single_action_space).to(device)
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         agent.eval()
 
@@ -173,10 +217,11 @@ class BaseEvaluator:
         self.full_next_agent_obs = torch.zeros((self.args.max_episode_steps*self.args.human_utterance_memory_length, self.num_envs) + (agent.single_observation_space,)).to(device)
 
         human_agent = None
-        if self.args.human_agent_type is not None and self.args.human_agent_type != "IDM":
-            human_agent = HumanAgent(envs, self.args, device, num_envs=self.num_envs)
-        elif self.args.human_agent_type is not None and self.args.human_agent_type == "IDM":
-            human_agent = HumanDriverAgent(envs, self.args, device, num_envs=self.num_envs)
+        if self.args.human_agent_type is not None and self.args.human_agent_type != "None":
+            if self.args.human_agent_type != "IDM":
+                human_agent = HumanAgent(envs, self.args, device, num_envs=self.num_envs)
+            elif self.args.human_agent_type == "IDM":
+                human_agent = HumanDriverAgent(envs, self.args, device, num_envs=self.num_envs)
 
         obs, infos = envs.reset()
         episodic_returns = []
@@ -219,6 +264,9 @@ class BaseEvaluator:
                 human_actions, overwrite_flag = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])
                 actions = np.concatenate([agent_actions, human_actions.reshape(-1,1), overwrite_flag.reshape(-1,1)], axis=1)[0]
                 human_action = human_actions.item()
+            elif self.args.env_id == "HumanAgentLunarLander":
+                actions = agent_actions.cpu().numpy().item()
+                human_action = None
             else:
                 actions = (0, 0, 0, agent_actions.cpu().numpy().item(), 0)
                 human_action = None
@@ -230,8 +278,14 @@ class BaseEvaluator:
             total_reward += reward
 
             # Track additional metrics
-            agent_action_type = info["utterance"][0]
-            agent_action_length = info["utterance"][2]
+            if "utterance" in info:
+                agent_action_type = info["utterance"][0]
+                agent_action = info["utterance"][1]
+                agent_action_length = info["utterance"][2]
+            else:
+                agent_action_type = 0
+                agent_action = 0
+                agent_action_length = 0
             
             if agent_action_type == 2:
                 type2_count += 1
@@ -248,7 +302,7 @@ class BaseEvaluator:
             trajectory_step = {
                 'step': step,
                 'agent_action_type': agent_action_type,
-                'agent_action': info["utterance"][1],
+                'agent_action': agent_action,
                 'agent_action_length': agent_action_length,
                 'human_action': human_action,
                 'overwritten': overwrite_flag,
