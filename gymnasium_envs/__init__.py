@@ -12,6 +12,11 @@ register(
 )
 
 register(
+    id="HumanAgentLunarLander",
+    entry_point="gymnasium_envs.envs.lunar_lander:HumanAgentLunarLander",
+)
+
+register(
     id="DangerZoneLunarLander",
     entry_point="gymnasium_envs.envs.lunar_lander:DangerZoneLunarLander",
 )

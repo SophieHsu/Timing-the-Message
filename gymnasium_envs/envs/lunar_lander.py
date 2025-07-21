@@ -316,18 +316,18 @@ class NotiLunarLander(gym.Env, EzPickle):
                 1.0,
                 1.0,
                 # beam distances to danger zones
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5,
+                1.5
             ]
         ).astype(np.float32)
 
@@ -549,7 +549,7 @@ class NotiLunarLander(gym.Env, EzPickle):
 
             # For each beam, calculate distance to danger zone
             for i, angle_deg in enumerate(beam_angles):
-                angle_rad = math.radians(angle_deg) + self.lander.angle
+                angle_rad = math.radians(angle_deg) #+ self.lander.angle
                 dx = math.cos(angle_rad)
                 dy = math.sin(angle_rad)
 
@@ -1850,10 +1850,16 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.possible_danger_zones = [
             # Configuration 1: Three zones forming a challenging path
             [
-                [[-1.0, -0.6], [1.0, 1.33]],
+                [[-1.0, 0.3], [1.0, 1.33]],
                 [[-0.3, 1.0], [0.3, 0.6]],
                 [[0.3, 1.0], [0, 0.3]]
             ],
+            # # Configuration 1: Three zones forming a challenging path
+            # [
+            #     [[-1.0, -0.6], [1.0, 1.33]],
+            #     [[-0.3, 1.0], [0.3, 0.6]],
+            #     [[0.3, 1.0], [0, 0.3]]
+            # ],
             # Configuration 2: Three zones with left-side emphasis
             [
                 [[-1.0, -0.3], [0.1, 0.3]],
@@ -1888,7 +1894,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.time_penalty = -0.0
         self.prev_state = None
         self.enable_wind = False
-        self.random_danger_zone = True
+        self.random_danger_zone = False
         self.noti_action_length = len(self.action_space.nvec)-1
         
     def reset(
@@ -1952,8 +1958,9 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
 
         # Create Lander body
         initial_y = VIEWPORT_H / SCALE
-        # initial_x = self.np_random.uniform(VIEWPORT_W / SCALE / 2, VIEWPORT_W / SCALE)
-        initial_x = VIEWPORT_W / SCALE / 2
+        initial_x = (VIEWPORT_W / SCALE) * 8 / 10
+        # initial_x = self.np_random.uniform((VIEWPORT_W / SCALE) * 7 / 10, (VIEWPORT_W / SCALE) * 9 / 10)
+        # initial_x = VIEWPORT_W / SCALE / 2
         self.lander: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(initial_x, initial_y),
             angle=0.0,
@@ -2244,24 +2251,32 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
             self.reward_components["noti_penalty"] = 0
 
         # value for outputting noti_action[0] == 1 after noti_action[0] == 2 and noti_action[1] == n
+        noti_content_reward = 0.1
         tmp_length = 0
         noti_continue = 0
+        noti_continue_reward = 0.0
         if noti_action[0] == 1:
             for i, j in enumerate(reversed(self.noti_history[:-1])):
                 if j[0] == 0:
                     break
                 if j[0] == 2:
                     tmp_length = j[2]
-                    if i < tmp_length:
-                        noti_continue += ((i+1)*0.01)
+                    if i < tmp_length - 1:
+                        noti_continue += ((i+1)*noti_continue_reward)
+                    # if not blocking version of the training
+                    if i == tmp_length:
+                        # value for longer notification
+                        self.reward_components["noti_content_reward"] = (tmp_length-2)*noti_content_reward # reward length 5 with 3; and length 2 with 0
+                        reward += self.reward_components["noti_content_reward"]
                     break
         reward += noti_continue
         self.reward_components["noti_continue"] = noti_continue
 
-        # # value for longer notification
-        # noti_content_reward = 2
-        # if noti_action[0] == 2:
-        #     self.reward_components["noti_content_reward"] = (noti_action[2]-2)+noti_content_reward # reward length 5 with 2; and length 2 with 0
+        # # value for longer notification (ONLY FOR BLOCKING VERSION)
+        # if noti_action[0] == 2 and self.noti_action_length > 3:
+        #     self.reward_components["noti_content_reward"] = (noti_action[3]-2)+noti_content_reward # reward length 5 with 3; and length 2 with 0
+        # elif noti_action[0] == 2 and self.noti_action_length <= 3:
+        #     self.reward_components["noti_content_reward"] = (noti_action[2]-2)+noti_content_reward # reward length 5 with 3; and length 2 with 0
         # else:
         #     self.reward_components["noti_content_reward"] = 0
         # reward += self.reward_components["noti_content_reward"]

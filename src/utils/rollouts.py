@@ -50,7 +50,8 @@ class BaseRolloutCollector:
         self.num_envs = num_envs if num_envs is not None else args.num_envs
         self.agent_single_action_space = agent_single_action_space
         self.initialize_storage()
-        self.obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+        if self.args.norm_obs:
+            self.obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
 
     def initialize_storage(self):
         observation_space_shape = self.envs.single_observation_space if isinstance(self.envs.single_observation_space, tuple) else self.envs.single_observation_space.shape
@@ -88,7 +89,8 @@ class BaseRolloutCollector:
 
     def collect_rollouts(self, global_step):
         self.initialize_storage()
-        self.obs_rms = RunningMeanStd(shape=self.envs.single_observation_space.shape)
+        if self.args.norm_obs:
+            self.obs_rms = RunningMeanStd(shape=self.envs.single_observation_space.shape)
         next_obs, infos = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(self.device)
         
@@ -101,8 +103,11 @@ class BaseRolloutCollector:
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                self.obs_rms.update(next_obs.cpu().numpy())    # obs shape: (num_envs, *obs_dim)
-                next_agent_obs = ((next_obs - torch.tensor(self.obs_rms.mean, device=self.device)) / torch.sqrt(torch.tensor(self.obs_rms.var + 1e-8, device=self.device))).float()
+                if self.args.norm_obs:
+                    self.obs_rms.update(next_obs.cpu().numpy())    # obs shape: (num_envs, *obs_dim)
+                    next_agent_obs = ((next_obs - torch.tensor(self.obs_rms.mean, device=self.device)) / torch.sqrt(torch.tensor(self.obs_rms.var + 1e-8, device=self.device))).float()
+                else:
+                    next_agent_obs = next_obs
                 if self.human_agent is not None:
                     next_agent_obs = self.compute_next_agent_obs(next_agent_obs, infos)
                 else:
@@ -181,6 +186,120 @@ class BaseRolloutCollector:
         }
 
         return results
+
+class BlockingRolloutCollector(BaseRolloutCollector):
+    def __init__(self, args, agent, envs, writer, device, human_agent, agent_single_action_space, num_envs=None):
+        super().__init__(args, agent, envs, writer, device, human_agent, agent_single_action_space, num_envs=num_envs)
+        self.track_blocking = np.array([0] * self.num_envs)
+        
+    def collect_rollouts(self, global_step):
+        self.initialize_storage()
+        if self.args.norm_obs:
+            self.obs_rms = RunningMeanStd(shape=self.envs.single_observation_space.shape)
+        next_obs, infos = self.envs.reset()
+        next_obs = torch.Tensor(next_obs).to(self.device)
+        
+        next_done = torch.zeros(self.num_envs).to(self.device)
+        self.track_blocking = np.array([0] * self.num_envs)
+
+        for step in range(0, self.args.num_steps):
+            global_step += self.num_envs
+            self.obs[step] = next_obs
+            self.dones[step] = next_done
+
+            # ALGO LOGIC: action logic
+            with torch.no_grad():
+                if self.args.norm_obs:
+                    self.obs_rms.update(next_obs.cpu().numpy())    # obs shape: (num_envs, *obs_dim)
+                    next_agent_obs = ((next_obs - torch.tensor(self.obs_rms.mean, device=self.device)) / torch.sqrt(torch.tensor(self.obs_rms.var + 1e-8, device=self.device))).float()
+                else:
+                    next_agent_obs = next_obs
+                if self.human_agent is not None:
+                    next_agent_obs = self.compute_next_agent_obs(next_agent_obs, infos)
+                else:
+                    next_agent_obs = next_obs
+                self.next_agent_obs[step] = next_agent_obs
+                self.full_next_agent_obs[step] = next_agent_obs
+                action, logprob, _, value = self.agent.get_action_and_value(next_agent_obs)
+                
+                new_action = torch.tensor(np.where(self.track_blocking[:, None] == 0, action.cpu().numpy(), np.array([1, 0, 0]))).to(self.device)
+                _, logprob, _, value = self.agent.get_action_and_value(next_agent_obs, new_action)
+
+                self.track_blocking = np.where((self.track_blocking == 0) & (action.cpu().numpy()[:, 0] == 2), ((action.cpu().numpy()[:, 2]*3)+2)*int(self.args.human_comprehend_bool), self.track_blocking)
+
+                self.values[step] = value.flatten()
+            self.actions[step] = new_action
+            self.logprobs[step] = logprob
+
+            # TRY NOT TO MODIFY: execute the game and log data.
+            if self.human_agent is not None:
+                human_action, overwrite_flag = self.human_agent.get_action(next_obs, infos['utterance'])
+                full_actions = np.concatenate([new_action.cpu().numpy(), human_action.reshape(-1, 1), overwrite_flag.reshape(-1, 1)], axis=1)
+            else:
+                # Create action array more efficiently
+                full_actions = new_action.cpu().numpy()
+                # # Pre-allocate the full action array with zeros
+                # full_actions = np.zeros((self.num_envs, self.envs.envs[0].unwrapped.noti_action_length+2), dtype=np.float32)
+                # # Only set the last element (the actual action)
+                # full_actions[:, self.envs.envs[0].unwrapped.noti_action_length] = action_np.reshape(-1)
+            
+            # TRY NOT TO MODIFY: execute the game and log data.
+            next_obs, reward, terminations, truncations, infos = self.envs.step(full_actions)
+            # stages, new_reward, prev_shapings, dist_threshold = reward_wrapper(next_obs, stages, prev_shapings, mode=self.args.reward_mode, dist_threshold= dist_threshold)
+            # filtered_reward = [value if value in filter_set else 0 for value in reward]
+            # reward += filtered_reward
+
+            next_done = np.logical_or(terminations, truncations)
+            
+            self.rewards[step] = torch.tensor(reward).to(self.device).view(-1)
+            next_obs, next_done = torch.Tensor(next_obs).to(self.device), torch.Tensor(next_done).to(self.device)
+            self.track_blocking = np.where(self.track_blocking > 0, self.track_blocking - 1, self.track_blocking)
+
+            # Log episode data more efficiently
+            if next_done.any():
+                # Get indices of done episodes
+                done_indices = torch.where(next_done)[0]
+                for i in done_indices:
+                    i = i.item()  # Convert to Python int for indexing
+                    if self.args.human_rollout_reset:
+                        self.human_agent.reset(i)
+
+                    if self.writer is not None:
+                        # print(f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}")
+                        self.writer.add_scalar("charts/episodic_return", infos["episode"]["r"][i], global_step)
+                        self.writer.add_scalar("charts/episodic_length", infos["episode"]["l"][i], global_step)
+
+        # bootstrap value if not done
+        with torch.no_grad():
+            next_value = self.agent.get_value(next_agent_obs).reshape(1, -1)
+            advantages = torch.zeros_like(self.rewards).to(self.device)
+            lastgaelam = 0
+            for t in reversed(range(self.args.num_steps)):
+                if t == self.args.num_steps - 1:
+                    nextnonterminal = 1.0 - next_done
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - self.dones[t + 1]
+                    nextvalues = self.values[t + 1]
+                delta = self.rewards[t] + self.args.gamma * nextvalues * nextnonterminal - self.values[t]
+                advantages[t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + self.values
+
+        results = {
+            "global_step": global_step,
+            "obs": self.obs,
+            "next_agent_obs": self.next_agent_obs,
+            "actions": self.actions,
+            "logprobs": self.logprobs,
+            "rewards": self.rewards,
+            "dones": self.dones,
+            "values": self.values,
+            "returns": returns,
+            "advantages": advantages,
+        }
+
+        return results
+
 
 class LSTMRolloutCollector(BaseRolloutCollector):
     def __init__(self, args, agent, envs, writer, device, human_agent, agent_single_action_space, num_envs=None):
@@ -793,6 +912,7 @@ class CookingLSTMRolloutWorker:
         rewards = torch.zeros((args.num_steps,), device=device)
         dones = torch.zeros((args.num_steps,), device=device)
         values = torch.zeros((args.num_steps,), device=device)
+        self.track_blocking = np.array([0] * self.num_envs)
 
         for step in range(0, self.args.num_steps):
             global_step += args.num_envs
@@ -864,7 +984,14 @@ class CookingLSTMRolloutWorker:
                 infos["utterance"] = info["utterance"].reshape(self.num_envs, -1)
                 prev_agent_obs = full_next_agent_obs[-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:]
                 next_agent_obs = self.compute_next_agent_obs(next_obs, infos, num_envs=1, prev_agent_obs=prev_agent_obs, first_flag=first_flag)
-                action, logprob, _, value, next_lstm_state = self.agent.notifier_model.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
+                action, logprob, _, value, tmp_next_lstm_state = self.agent.notifier_model.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
+                if self.args.blocking:
+                    new_action = torch.tensor(np.where(self.track_blocking[:, None] == 0, action.cpu().numpy(), np.array([1, 0]))).to(self.device)
+                    self.track_blocking = np.where((self.track_blocking == 0) & (action.cpu().numpy()[:, 0] == 2), ((int(action.cpu().numpy()[:, 1]/4)*3)+2)*int(self.args.human_comprehend_bool), self.track_blocking)
+                    action, logprob, _, value, next_lstm_state = self.agent.notifier_model.get_action_and_value(next_agent_obs, next_lstm_state, next_done, action=new_action)
+                else:
+                    next_lstm_state = tmp_next_lstm_state
+                _, _ = self.agent.action(self.env.state)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -893,7 +1020,8 @@ class CookingLSTMRolloutWorker:
             total_reward += reward
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).unsqueeze(0).to(device), torch.Tensor([next_done]).to(device)
-
+            if self.args.blocking:
+                self.track_blocking = np.where(self.track_blocking > 0, self.track_blocking - 1, self.track_blocking)
             first_flag = False
 
         # bootstrap value if not done

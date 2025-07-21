@@ -103,7 +103,7 @@ class NotifierMLPAgent(MLPAgent):
                 features_dim=128
             )
 
-        hidden_dim = 128
+        hidden_dim = 64
         if len(single_action_space.nvec) == 4:
             self.condition_dim, self.id_dim, self.length_dim, _ = single_action_space.nvec
         else:
@@ -113,18 +113,18 @@ class NotifierMLPAgent(MLPAgent):
         self.notifier = nn.Sequential(
             layer_init(nn.Linear(input_dim, hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim, hidden_dim//2)),
+            layer_init(nn.Linear(hidden_dim, hidden_dim)),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_dim//2, hidden_dim//4)),
-            nn.Tanh(),
+            # layer_init(nn.Linear(hidden_dim//2, hidden_dim//4)),
+            # nn.Tanh(),
         )
         
         if self.use_condition_head:
-            self.condition_head = layer_init(nn.Linear(hidden_dim//4, self.condition_dim), std=0.01)
-        self.id_head = layer_init(nn.Linear(hidden_dim//4, self.id_dim), std=0.01)
-        self.length_head = layer_init(nn.Linear(hidden_dim//4, self.length_dim), std=0.01)
+            self.condition_head = nn.Linear(hidden_dim, self.condition_dim)
+        self.id_head = nn.Linear(hidden_dim, self.id_dim)
+        self.length_head = nn.Linear(hidden_dim, self.length_dim)
         if self.use_react_head:
-            self.react_head = layer_init(nn.Linear(hidden_dim//4, self.react_dim), std=0.01)
+            self.react_head = nn.Linear(hidden_dim, self.react_dim)
 
     def get_value(self, x):
         if self.feature_extractor == "highway" or self.args.env_id == "steakhouse":

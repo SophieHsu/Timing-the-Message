@@ -108,7 +108,7 @@ class NotifierLSTMAgent(LSTMAgent):
             self.condition_head = layer_init(nn.Linear(128, self.condition_dim), std=0.01)
         self.id_head = layer_init(nn.Linear(128, self.id_dim), std=0.01)
 
-        if args.discretization != "shortvlong":
+        if args.discretization not in ["shortvlong", "short4vlong3"]:
             self.length_head = layer_init(nn.Linear(128, self.length_dim), std=0.01)
         if self.use_react_head:
             self.react_head = nn.Linear(128, self.react_dim)
@@ -143,9 +143,9 @@ class NotifierLSTMAgent(LSTMAgent):
         hidden, lstm_state = self.get_states(x, lstm_state, done)
 
         id_logits = self.id_head(hidden)
-        if self.args.discretization != "shortvlong": length_logits = self.length_head(hidden)
+        if self.args.discretization not in ["shortvlong", "short4vlong3"]: length_logits = self.length_head(hidden)
         id_probs = Categorical(logits=id_logits)
-        if self.args.discretization != "shortvlong": length_probs = Categorical(logits=length_logits)
+        if self.args.discretization not in ["shortvlong", "short4vlong3"]: length_probs = Categorical(logits=length_logits)
         
         
         if self.use_condition_head:
@@ -168,14 +168,14 @@ class NotifierLSTMAgent(LSTMAgent):
                 react = torch.zeros(self.args.num_envs).to(self.args.device)
 
             id = id_probs.sample()
-            if self.args.discretization != "shortvlong":
+            if self.args.discretization not in ["shortvlong", "short4vlong3"]:
                 length = length_probs.sample()
 
-            if self.use_react_head and self.args.discretization != "shortvlong":
+            if self.use_react_head and self.args.discretization not in ["shortvlong", "short4vlong3"]:
                 action = torch.stack([condition, id, length, react], dim=1)
-            elif self.use_react_head and self.args.discretization == "shortvlong":
+            elif self.use_react_head and self.args.discretization in ["shortvlong", "short4vlong3"]:
                 action = torch.stack([condition, id, react], dim=1)
-            elif not self.use_react_head and self.args.discretization == "shortvlong":
+            elif not self.use_react_head and self.args.discretization in ["shortvlong", "short4vlong3"]:
                 action = torch.stack([condition, id], dim=1)
             else:
                 action = torch.stack([condition, id, length], dim=1)
@@ -187,7 +187,7 @@ class NotifierLSTMAgent(LSTMAgent):
             logprob = id_probs.log_prob(action[:, 1])
             entropy = id_probs.entropy()
 
-        if self.args.discretization != "shortvlong":
+        if self.args.discretization not in ["shortvlong", "short4vlong3"]:
             logprob = logprob + length_probs.log_prob(action[:, 2])
             entropy = entropy + length_probs.entropy()
 

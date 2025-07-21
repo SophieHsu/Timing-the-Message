@@ -12,7 +12,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector, BaseBlockingRolloutCollector, CookingLSTMRolloutCollector
+from src.utils.rollouts import BaseRolloutCollector, LSTMRolloutCollector, TransformerRolloutCollector, HeuristicRolloutCollector, BaseBlockingRolloutCollector, CookingLSTMRolloutCollector, BlockingRolloutCollector
 from src.utils.util import make_env
 from src.utils.evaluate import BaseEvaluator, LSTMEvaluator, TransformerEvaluator, BaseBlockingEvaluator, CookingLSTMEvaluator
 
@@ -26,7 +26,10 @@ class BaseTrainer:
         self.run_name = run_name
         self.device = device
         self.agent_single_action_space = envs.single_action_space[-1].shape if human_agent is None else envs.single_action_space[:-1].shape
-        self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
+        if args.blocking:
+            self.rollout_collector = BlockingRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
+        else:
+            self.rollout_collector = BaseRolloutCollector(args, agent, envs, writer, device, human_agent, agent_single_action_space=self.agent_single_action_space)
         self.evaluator = BaseEvaluator(args, run_name)
         self.human_agent = human_agent
         self.current_ent_coef = self.args.ent_coef
@@ -356,12 +359,12 @@ class LSTMTrainer(BaseTrainer):
                 torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
                 wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
-                for fixed_objects_start_state_mode in range(0,10):
+                for fixed_objects_start_state_mode in range(0,2):
                     # try:
                     episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                         f"{wandb.run.dir}/agent.pt",
                         make_env,
-                        eval_episodes=10,
+                        eval_episodes=2,
                         model=self.agent.__class__,
                         device="cpu" if not torch.cuda.is_available() else "cuda",
                         capture_video=True,

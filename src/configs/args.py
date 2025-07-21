@@ -33,6 +33,7 @@ class Args:
     layout_random: bool = False
     eval_w_rollout: bool = False
     human_rollout_reset: bool = False
+    blocking: bool = False
 
     # Agent settings
     agent_type: str = "lstm"  # Options: "mlp", "lstm", "transformer", "heuristic"

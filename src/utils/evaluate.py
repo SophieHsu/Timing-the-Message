@@ -238,6 +238,7 @@ class BaseEvaluator:
         
         step = 0
         episode_idx = 0
+        track_blocking = np.zeros(self.num_envs)
         
         while len(episodic_returns) < eval_episodes:
             # Initialize trajectory data for this episode
@@ -255,6 +256,10 @@ class BaseEvaluator:
                 next_agent_obs = torch.Tensor(obs).to(device)
 
             agent_actions, _, _, _ = agent.get_action_and_value(torch.Tensor(next_agent_obs).to(device))
+            if self.args.blocking:
+                agent_actions = np.where(track_blocking[:, None] == 0, agent_actions.cpu().numpy(), np.array([1, 0, 0]))
+                track_blocking = np.where((track_blocking == 0) & (agent_actions[:, 0] == 2), ((agent_actions[:, 2]*3)+2)*int(self.args.human_comprehend_bool), track_blocking)
+
             self.full_next_agent_obs[step] = next_agent_obs
             # Get human action if applicable
             human_action = None
@@ -313,6 +318,8 @@ class BaseEvaluator:
             trajectory_data.append(trajectory_step)
             
             next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor([next_done]).to(device)
+            if self.args.blocking:
+                track_blocking = np.where(track_blocking > 0, track_blocking - 1, track_blocking)
 
             if next_done:
                 episodic_returns += [total_reward]
@@ -335,6 +342,8 @@ class BaseEvaluator:
                 episode_idx += 1
                 if human_agent is not None:
                     human_agent.reset()
+                track_blocking = np.zeros(self.num_envs)
+                
             else:
                 step += 1
                 
@@ -389,6 +398,7 @@ class LSTMEvaluator(BaseEvaluator):
         type2_count = 0
         overwritten_count = 0
         action_length_counts = {}  # Dictionary to track frequency of each action length
+        track_blocking = np.array([0] * self.num_envs)
         
         while len(episodic_returns) < eval_episodes:
             # Initialize trajectory data for this episode
@@ -410,6 +420,7 @@ class LSTMEvaluator(BaseEvaluator):
                     if self.visualize and len(trajectory_data) > 0:
                         self.visualize_trajectory(episode_idx, trajectory_data)
                         episode_idx += 1
+                    track_blocking = np.array([0] * self.num_envs)
                 
                 n = 0
                 step = 0
@@ -439,6 +450,9 @@ class LSTMEvaluator(BaseEvaluator):
                 
             # Get agent action
             agent_actions, _, _, _, next_lstm_state = agent.get_action_and_value(next_agent_obs, next_lstm_state, next_done)
+            if self.args.blocking:
+                agent_actions = np.where(track_blocking[:, None] == 0, agent_actions.cpu().numpy(), np.array([1, 0, 0]))
+                track_blocking = np.where(track_blocking == 0, ((agent_actions[:, 2]*3)+2)*int(self.args.human_comprehend_bool)+(self.args.human_reaction_delay), track_blocking)
             self.next_agent_obs[step] = next_agent_obs
             self.full_next_agent_obs[step] = next_agent_obs
 
@@ -486,6 +500,8 @@ class LSTMEvaluator(BaseEvaluator):
             trajectory_data.append(trajectory_step)
             
             next_obs, next_done = torch.Tensor(np.array([next_obs])).to(device), torch.Tensor(np.array([next_done])).to(device)
+            if self.args.blocking:
+                track_blocking = np.where(track_blocking > 0, track_blocking - 1, track_blocking)
             step += 1
 
         return episodic_returns, episodic_type2_counts, episodic_overwritten_counts, episodic_action_length_varieties #, info_list, n_steps
