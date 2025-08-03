@@ -1080,7 +1080,7 @@ class NotiLunarLander(gym.Env, EzPickle):
                 dist = self._measure_danger_zone_distance(pos)
                 value = any(d < 0 for d in dist)
                 color = (255, 0, 0) if value else (0, 255, 0)
-                danger_text = font.render(f'DDist: {", ".join(f"{d:.2f}" for d in dist)}', True, color)
+                danger_text = font.render(f'DD: {", ".join(f"{d:.2f}" for d in dist)}', True, color)
                 self.surf.blit(danger_text, (10, y_offset))
                 y_offset += 20
             
@@ -1850,7 +1850,7 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
         self.possible_danger_zones = [
             # Configuration 1: Three zones forming a challenging path
             [
-                [[-1.0, 0.3], [1.0, 1.33]],
+                [[-1.0, -0.3], [0.9, 1.4]],
                 [[-0.3, 1.0], [0.3, 0.6]],
                 [[0.3, 1.0], [0, 0.3]]
             ],
@@ -1958,9 +1958,9 @@ class DangerZoneLunarLander(LargeRewardNotiLunarLander):
 
         # Create Lander body
         initial_y = VIEWPORT_H / SCALE
-        initial_x = (VIEWPORT_W / SCALE) * 8 / 10
+        # initial_x = (VIEWPORT_W / SCALE) * 8 / 10
         # initial_x = self.np_random.uniform((VIEWPORT_W / SCALE) * 7 / 10, (VIEWPORT_W / SCALE) * 9 / 10)
-        # initial_x = VIEWPORT_W / SCALE / 2
+        initial_x = VIEWPORT_W / SCALE / 2
         self.lander: Box2D.b2Body = self.world.CreateDynamicBody(
             position=(initial_x, initial_y),
             angle=0.0,

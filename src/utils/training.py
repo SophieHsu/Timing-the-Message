@@ -176,14 +176,14 @@ class BaseTrainer:
             # mid_time = time.time()
 
             if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
-                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
-                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
-                wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
-                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt")
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_agent.pt")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt", base_path=wandb.run.dir, policy="now")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_agent.pt", base_path=wandb.run.dir, policy="now")
 
                 if self.args.eval_w_rollout:
                     episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.rollout_version_evaluate(
-                        f"{wandb.run.dir}/agent.pt",
+                        f"{wandb.run.dir}/ckpt_{global_step}_agent.pt",
                         make_env,
                         eval_episodes=3,
                         model=self.agent.__class__,
@@ -193,7 +193,7 @@ class BaseTrainer:
                     )
                 else:
                     episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                        f"{wandb.run.dir}/agent.pt",
+                        f"{wandb.run.dir}/ckpt_{global_step}_agent.pt",
                         make_env,
                         eval_episodes=3,
                         model=self.agent.__class__,
@@ -355,14 +355,14 @@ class LSTMTrainer(BaseTrainer):
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
-                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
-                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
-                wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
-                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt")
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_agent.pt")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt", base_path=wandb.run.dir, policy="now")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_agent.pt", base_path=wandb.run.dir, policy="now")
                 for fixed_objects_start_state_mode in range(0,2):
                     # try:
                     episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                        f"{wandb.run.dir}/agent.pt",
+                        f"{wandb.run.dir}/ckpt_{global_step}_agent.pt",
                         make_env,
                         eval_episodes=2,
                         model=self.agent.__class__,
@@ -505,12 +505,12 @@ class TransformerTrainer(BaseTrainer):
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             if self.args.track and global_step % self.args.save_freq == 0: # 1 step = 50 global steps
-                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/optimizer.pt")
-                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
-                wandb.save(f"{wandb.run.dir}/optimizer.pt", base_path=wandb.run.dir, policy="now")
-                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                torch.save(optimizer.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt")
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_agent.pt")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_optimizer.pt", base_path=wandb.run.dir, policy="now")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_agent.pt", base_path=wandb.run.dir, policy="now")
                 episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                    f"{wandb.run.dir}/agent.pt",
+                    f"{wandb.run.dir}/ckpt_{global_step}_agent.pt",
                     make_env,
                     eval_episodes=3,
                     model=self.agent.__class__,
@@ -568,8 +568,8 @@ class HeuristicTrainer(BaseTrainer):
 
             # Log metrics
             if self.args.track and global_step % self.args.save_freq == 0:
-                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/agent.pt")
-                wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
+                torch.save(self.agent.state_dict(), f"{wandb.run.dir}/ckpt_{global_step}_agent.pt")
+                wandb.save(f"{wandb.run.dir}/ckpt_{global_step}_agent.pt", base_path=wandb.run.dir, policy="now")
                 
                 episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
                     f"{wandb.run.dir}/agent.pt",
@@ -626,7 +626,7 @@ class BlockingTrainer(BaseTrainer):
                 wandb.save(f"{wandb.run.dir}/agent.pt", base_path=wandb.run.dir, policy="now")
                 
                 episodic_returns, type2_counts, overwritten_counts, action_length_varieties = self.evaluator.evaluate(
-                    f"{wandb.run.dir}/agent.pt",
+                    f"{wandb.run.dir}/ckpt_{global_step}_agent.pt",
                     make_env,
                     eval_episodes=3,
                     model=self.agent.__class__,

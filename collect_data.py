@@ -76,12 +76,17 @@ def main():
     else:
         raise ValueError(f"Unknown agent type: {args.agent_type}")
     
+    obs_rms = None
+    if args.norm_obs:
+        from stable_baselines3.common.running_mean_std import RunningMeanStd
+        obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+    
     # For heuristic agent, we don't need to load weights from wandb
     if args.agent_type != "heuristic":
         # Load the trained agent
         api = wandb.Api()
         run = api.run(f"{args.wandb_entity}/timing/{args.model_run_id}")
-        model_path = run.config['filepath'] + "/agent.pt"
+        model_path = run.config['filepath'] + "/ckpt_60000000_agent.pt"
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
         agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -122,11 +127,16 @@ def main():
     with tqdm(total=total_episodes, desc="Collecting episodes") as pbar:
         while episode_count < total_episodes:
             # Get agent actions for all environments
-            reshape_next_obs = obs.reshape(num_envs, -1)
-            curr_agent_obs = torch.cat([torch.Tensor(reshape_next_obs).to(args.device), torch.Tensor(infos['utterance']).to(args.device)], dim=1)
-            prev_agent_obs = full_next_agent_obs[-1].reshape(num_envs, args.human_utterance_memory_length, -1)[:,1:]
-            next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(num_envs, -1)
-            agent_actions, _, _, _ = agent.get_action_and_value(next_agent_obs)
+            with torch.no_grad():
+                if args.norm_obs:
+                    obs_rms.update(obs.reshape(num_envs, -1))    # obs shape: (num_envs, *obs_dim)
+                    reshape_next_obs = ((torch.tensor(obs.reshape(num_envs, -1), device=args.device) - torch.tensor(obs_rms.mean, device=args.device)) / torch.sqrt(torch.tensor(obs_rms.var + 1e-8, device=args.device))).float()
+                else:
+                    reshape_next_obs = torch.tensor(obs.reshape(num_envs, -1), device=args.device)
+                curr_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(args.device)], dim=1)
+                prev_agent_obs = full_next_agent_obs[-1].reshape(num_envs, args.human_utterance_memory_length, -1)[:,1:]
+                next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(num_envs, -1)
+                agent_actions, _, _, _ = agent.get_action_and_value(next_agent_obs)
             
             # Get human actions for all environments
             human_actions, overwrite_flags = human_agent.get_action(torch.Tensor(obs).to(device), infos["utterance"])

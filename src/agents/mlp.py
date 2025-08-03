@@ -131,7 +131,7 @@ class NotifierMLPAgent(MLPAgent):
             x = self.feature_extract(x)
         return self.critic(x)
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, x, action=None, deterministic=False):
         if self.feature_extractor == "highway" or self.args.env_id == "steakhouse":
             x = self.feature_extract(x)
         features = self.notifier(x)
@@ -152,17 +152,17 @@ class NotifierMLPAgent(MLPAgent):
 
         if action is None:
             if self.use_condition_head:
-                condition = condition_probs.sample()
+                condition = condition_probs.sample() if not deterministic else condition_probs.probs.argmax(dim=1)
             else:
                 condition = torch.zeros(self.args.num_envs).to(self.args.device)
 
             if self.use_react_head:
-                react = react_probs.sample()
+                react = react_probs.sample() if not deterministic else react_probs.probs.argmax(dim=1)
             else:
                 react = torch.zeros(self.args.num_envs).to(self.args.device)
 
-            id = id_probs.sample()
-            length = length_probs.sample()
+            id = id_probs.sample() if not deterministic else id_probs.probs.argmax(dim=1)
+            length = length_probs.sample() if not deterministic else length_probs.probs.argmax(dim=1)
 
             if self.use_react_head:
                 action = torch.stack([condition, id, length, react], dim=1)

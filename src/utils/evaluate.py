@@ -26,11 +26,14 @@ class BaseEvaluator:
         self.num_envs = num_envs if num_envs is not None else args.num_envs
         self.device = args.device
 
-    def compute_next_agent_obs(self, next_obs, infos):
+    def compute_next_agent_obs(self, next_obs, infos, step):
         if self.args.agent_obs_mode == "history":
             reshape_next_obs = next_obs.reshape(self.num_envs, -1).to(self.device)
             curr_agent_obs = torch.cat([reshape_next_obs, torch.Tensor(infos['utterance']).to(self.device)], dim=1)
-            prev_agent_obs = self.full_next_agent_obs[-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:].to(self.device)
+            if step == 0:
+                prev_agent_obs = self.full_next_agent_obs[step].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:].to(self.device)
+            else:
+                prev_agent_obs = self.full_next_agent_obs[step-1].reshape(self.num_envs, self.args.human_utterance_memory_length, -1)[:,1:].to(self.device)
             next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(self.num_envs, -1)
         else:
             reshape_next_obs = next_obs.reshape(self.num_envs, -1).to(self.device)
@@ -191,7 +194,7 @@ class BaseEvaluator:
         episodic_returns = [results["rewards"][:,i].sum().item() for i in range(eval_episodes)]
 
         return episodic_returns, 0, 0, 0
-
+   
     def evaluate(self,
         model_path: str,
         make_env: Callable,
@@ -251,7 +254,7 @@ class BaseEvaluator:
             
             # Get agent action
             if human_agent is not None:
-                next_agent_obs = self.compute_next_agent_obs(torch.Tensor(obs).to(device), infos)
+                next_agent_obs = self.compute_next_agent_obs(torch.Tensor(obs).to(device), infos, step)
             else:
                 next_agent_obs = torch.Tensor(obs).to(device)
 

@@ -52,6 +52,8 @@ class BaseRolloutCollector:
         self.initialize_storage()
         if self.args.norm_obs:
             self.obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+        if self.args.norm_reward:
+            self.ret_rms = RunningMeanStd(shape=())
 
     def initialize_storage(self):
         observation_space_shape = self.envs.single_observation_space if isinstance(self.envs.single_observation_space, tuple) else self.envs.single_observation_space.shape
@@ -64,7 +66,7 @@ class BaseRolloutCollector:
         self.dones = torch.zeros((self.args.num_steps, self.num_envs)).to(self.device) 
         self.values = torch.zeros((self.args.num_steps, self.num_envs)).to(self.device)
 
-    def compute_next_agent_obs(self, next_obs, infos, num_envs=None, prev_agent_obs=None):
+    def compute_next_agent_obs(self, next_obs, infos, step,num_envs=None, prev_agent_obs=None):
         num_envs = num_envs if num_envs is not None else self.num_envs
         if self.human_agent is not None:
             if self.args.agent_obs_mode == "history":
@@ -75,7 +77,10 @@ class BaseRolloutCollector:
                 # Concatenate along the feature dimension
                 curr_agent_obs = torch.cat([next_obs_reshaped, utterance_tensor], dim=1)
                 # Get previous observations
-                prev_agent_obs = self.full_next_agent_obs[-1].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:] if prev_agent_obs is None else prev_agent_obs
+                if step == 0:
+                    prev_agent_obs = self.full_next_agent_obs[step].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:] if prev_agent_obs is None else prev_agent_obs
+                else:
+                    prev_agent_obs = self.full_next_agent_obs[step-1].reshape(num_envs, self.args.human_utterance_memory_length, -1)[:,1:] if prev_agent_obs is None else prev_agent_obs
                 # Concatenate with current observation
                 next_agent_obs = torch.cat([prev_agent_obs, curr_agent_obs.unsqueeze(1)], dim=1).reshape(num_envs, -1)
             else:
@@ -89,8 +94,6 @@ class BaseRolloutCollector:
 
     def collect_rollouts(self, global_step):
         self.initialize_storage()
-        if self.args.norm_obs:
-            self.obs_rms = RunningMeanStd(shape=self.envs.single_observation_space.shape)
         next_obs, infos = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(self.device)
         
@@ -109,7 +112,7 @@ class BaseRolloutCollector:
                 else:
                     next_agent_obs = next_obs
                 if self.human_agent is not None:
-                    next_agent_obs = self.compute_next_agent_obs(next_agent_obs, infos)
+                    next_agent_obs = self.compute_next_agent_obs(next_agent_obs, infos, step)
                 else:
                     next_agent_obs = next_obs
                 self.next_agent_obs[step] = next_agent_obs
@@ -136,9 +139,10 @@ class BaseRolloutCollector:
             # stages, new_reward, prev_shapings, dist_threshold = reward_wrapper(next_obs, stages, prev_shapings, mode=self.args.reward_mode, dist_threshold= dist_threshold)
             # filtered_reward = [value if value in filter_set else 0 for value in reward]
             # reward += filtered_reward
-
             next_done = np.logical_or(terminations, truncations)
-            
+            if self.args.norm_reward:
+                self.ret_rms.update(reward)
+                reward = (reward - self.ret_rms.mean) / (self.ret_rms.var + 1e-8)**0.5
             self.rewards[step] = torch.tensor(reward).to(self.device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(self.device), torch.Tensor(next_done).to(self.device)
 
